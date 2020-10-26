@@ -869,6 +869,8 @@ namespace Avalonia.Controls
             }
         }
 
+        protected override AutomationPeer OnCreateAutomationPeer() => new TextAutomationPeer(this);
+
         private static bool IsValidMaxLines(int maxLines) => maxLines >= 0;
 
         private static bool IsValidLineHeight(double lineHeight) => double.IsNaN(lineHeight) || lineHeight > 0;

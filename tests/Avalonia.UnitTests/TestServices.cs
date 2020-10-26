@@ -130,6 +130,7 @@ namespace Avalonia.UnitTests
         }
 
         public IAssetLoader AssetLoader { get; }
+        public IPlatformAutomationInterface AutomationPlatform { get; }
         public IInputManager InputManager { get; }
         internal IGlobalClock GlobalClock { get; set; }
         internal IAccessKeyHandler AccessKeyHandler { get; }

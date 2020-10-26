@@ -4,6 +4,7 @@ using System.ComponentModel;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
@@ -58,6 +59,9 @@ namespace Avalonia.Controls
                 "RequestBringIntoView",
                 RoutingStrategies.Bubble);
 
+        private DataTemplates _dataTemplates;
+        private IControl _focusAdorner;
+        private Optional<AutomationPeer> _automationPeer;
         /// <summary>
         /// Provides event data for the <see cref="ContextRequested"/> event.
         /// </summary>
@@ -455,6 +459,23 @@ namespace Avalonia.Controls
                 adornerLayer.Children.Remove(_focusAdorner);
                 _focusAdorner = null;
             }
+        }
+
+        protected virtual AutomationPeer OnCreateAutomationPeer() => null;
+
+        internal AutomationPeer GetOrCreateAutomationPeer()
+        {
+            VerifyAccess();
+
+            if (_automationPeer.HasValue)
+            {
+                return _automationPeer.Value;
+            }
+
+            var result = OnCreateAutomationPeer();
+            _automationPeer = result;
+            result?.CreatePlatformImpl();
+            return result;
         }
 
         /// <summary>
