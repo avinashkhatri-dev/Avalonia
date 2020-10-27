@@ -467,7 +467,7 @@ namespace Avalonia.Controls
         {
             VerifyAccess();
 
-            if (_automationPeer.HasValue)
+            if (_automationPeerCreated)
             {
                 return _automationPeer.Value;
             }
