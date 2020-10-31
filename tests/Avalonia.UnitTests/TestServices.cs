@@ -71,6 +71,9 @@ namespace Avalonia.UnitTests
         
         public TestServices(
             IAssetLoader assetLoader = null,
+            IPlatformAutomationPeerFactory automationPlatform = null,
+            IFocusManager focusManager = null,
+            IGlobalClock globalClock = null,
             IInputManager inputManager = null,
             Func<IKeyboardDevice> keyboardDevice = null,
             Func<IKeyboardNavigationHandler> keyboardNavigation = null,
@@ -130,7 +133,7 @@ namespace Avalonia.UnitTests
         }
 
         public IAssetLoader AssetLoader { get; }
-        public IPlatformAutomationInterface AutomationPlatform { get; }
+        public IPlatformAutomationPeerFactory AutomationPlatform { get; }
         public IInputManager InputManager { get; }
         internal IGlobalClock GlobalClock { get; set; }
         internal IAccessKeyHandler AccessKeyHandler { get; }
@@ -149,6 +152,9 @@ namespace Avalonia.UnitTests
 
         internal TestServices With(
             IAssetLoader assetLoader = null,
+            IPlatformAutomationPeerFactory automationPlatform = null,
+            IFocusManager focusManager = null,
+            IGlobalClock globalClock = null,
             IInputManager inputManager = null,
             Func<IKeyboardDevice> keyboardDevice = null,
             Func<IKeyboardNavigationHandler> keyboardNavigation = null,
