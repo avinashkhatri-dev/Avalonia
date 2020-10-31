@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Threading;
 using Avalonia.Controls;
+using Avalonia.Controls.Automation.Peers;
 using Avalonia.Controls.Platform;
 using Avalonia.Controls.Primitives.PopupPositioning;
 using Avalonia.FreeDesktop;
