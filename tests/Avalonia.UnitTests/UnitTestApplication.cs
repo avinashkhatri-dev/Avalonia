@@ -9,6 +9,7 @@ using System.Threading;
 using Avalonia.Input.Platform;
 using Avalonia.Animation;
 using Avalonia.Media;
+using Avalonia.Controls.Platform;
 
 namespace Avalonia.UnitTests
 {
@@ -64,6 +65,8 @@ namespace Avalonia.UnitTests
         {
             AvaloniaLocator.CurrentMutable
                 .Bind<IAssetLoader>().ToConstant(Services.AssetLoader)
+                .Bind<IPlatformAutomationPeerFactory>().ToConstant(Services.AutomationPlatform)
+                .Bind<IFocusManager>().ToConstant(Services.FocusManager)
                 .Bind<IGlobalClock>().ToConstant(Services.GlobalClock)
                 .BindToSelf<IGlobalStyles>(this)
                 .Bind<IInputManager>().ToConstant(Services.InputManager)

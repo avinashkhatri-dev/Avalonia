@@ -113,5 +113,7 @@ namespace Avalonia.Controls
                 }
             }
         }
+
+        protected override AutomationPeer OnCreateAutomationPeer() => new TabItemAutomationPeer(this);
     }
 }

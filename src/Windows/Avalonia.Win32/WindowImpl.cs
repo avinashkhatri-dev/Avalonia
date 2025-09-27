@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Avalonia.Collections.Pooled;
 using Avalonia.Controls;
+using Avalonia.Controls.Automation.Peers;
 using Avalonia.Controls.Platform;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
