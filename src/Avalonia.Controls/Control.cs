@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Avalonia.Automation.Peers;
+using Avalonia.Controls.Platform;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -461,9 +462,21 @@ namespace Avalonia.Controls
         /// Returns a new, type-specific <see cref="AutomationPeer"/> implementation for the control.
         /// </summary>
         /// <returns>The type-specific <see cref="AutomationPeer"/> implementation.</returns>
-        protected virtual AutomationPeer OnCreateAutomationPeer()
+        protected virtual AutomationPeer? OnCreateAutomationPeer()
         {
-            return new NoneAutomationPeer(this);
+            // Check if a platform-specific automation peer factory is available
+            var factory = AvaloniaLocator.Current.GetService<IAutomationPeerFactory>();
+            if (factory != null)
+            {
+                var platformPeer = factory.CreateAutomationPeer(this);
+                if (platformPeer != null)
+                {
+                    return platformPeer;
+                }
+            }
+            
+            // Fall back to the default ControlAutomationPeer
+            return new ControlAutomationPeer(this);
         }
 
         internal AutomationPeer? GetAutomationPeer()
@@ -481,8 +494,10 @@ namespace Avalonia.Controls
                 return _automationPeer;
             }
 
-            _automationPeer = OnCreateAutomationPeer();
-            return _automationPeer;
+            var result = OnCreateAutomationPeer();
+            _automationPeer = result;
+            result?.CreatePlatformImpl();
+            return result!;
         }
 
         /// <inheritdoc/>
