@@ -219,6 +219,18 @@ namespace Avalonia.FreeDesktop.Atspi
         Task<CacheItem[]> GetItemsAsync();
     }
 
+    /// <summary>
+    /// The AT-SPI Registry interface for registering applications
+    /// </summary>
+    internal interface IRegistry
+    {
+        Task RegisterApplicationAsync(ObjectReference app);
+        Task DeregisterApplicationAsync(ObjectReference app);
+        Task<ObjectReference[]> GetApplicationsAsync();
+        Task RegisterEventListenerAsync(string listener, string eventName);
+        Task DeregisterEventListenerAsync(string listener, string eventName);
+    }
+
     internal interface ISocket
     {
         Task<ObjectReference> EmbedAsync(ObjectReference Plug);

@@ -1,6 +1,7 @@
 using System;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 
 #nullable enable
 
@@ -28,6 +29,13 @@ namespace Avalonia.FreeDesktop
         {
             try
             {
+                // Ensure the AT-SPI root is initialized
+                if (AtspiRoot.Current == null)
+                {
+                    // Register the root with a simple factory - just use this peer as root for now
+                    AtspiRoot.RegisterRoot(() => this);
+                }
+
                 // Create the AT-SPI context using the global root instance
                 _atspiContext = AtspiRoot.Current?.CreateAutomationContext(this);
             }

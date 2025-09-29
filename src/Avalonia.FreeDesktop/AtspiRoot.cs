@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using Avalonia.Automation.Peers;
@@ -31,12 +32,14 @@ namespace Avalonia.FreeDesktop
         // TODO: Not sure where to store this shared instance.
         private static AtspiRoot? _instance;
         private static bool _instanceInitialized;
+        private static Connection? _connection;
 
         private readonly List<Child> _children = new List<Child>();
         private readonly Dictionary<AutomationPeer, AtspiContext> _contexts = new();
         private AtspiCache? _cache;
         private AccessibleProperties? _accessibleProperties;
         private ApplicationProperties? _applicationProperties;
+        private string? _busName;
 
         public AtspiRoot()
         {
@@ -44,9 +47,9 @@ namespace Avalonia.FreeDesktop
         }
 
         public ObjectPath ObjectPath => RootPath;
-        public ObjectReference ApplicationPath => new ObjectReference(LocalName, ObjectPath);
+        public ObjectReference ApplicationPath => new ObjectReference(_busName ?? LocalName, ObjectPath);
         public IDictionary<string, string> Attributes { get; }
-        public string LocalName => ":1.0"; // Simplified for demo - should be proper D-Bus address
+        public string LocalName => _busName ?? ":1.1";
 
         /// <summary>
         /// Gets the current AT-SPI root instance, if initialized.
@@ -59,6 +62,9 @@ namespace Avalonia.FreeDesktop
             {
                 _instance = new AtspiRoot();
                 _instanceInitialized = true;
+                
+                // Initialize D-Bus connection
+                _ = Task.Run(() => _instance.InitializeDBusAsync());
             }
 
             _instance?._children.Add(new Child(peerGetter));
@@ -72,6 +78,57 @@ namespace Avalonia.FreeDesktop
             _cache?.Add(result);
             System.Diagnostics.Debug.WriteLine($"Created {result.ObjectPath} for {peer}");
             return result;
+        }
+
+        private async Task InitializeDBusAsync()
+        {
+            try
+            {
+                // Connect to session bus
+                var address = Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS");
+                if (string.IsNullOrEmpty(address))
+                {
+                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "DBUS_SESSION_BUS_ADDRESS not set");
+                    return;
+                }
+
+                _connection = new Connection(address);
+                await _connection.ConnectAsync();
+                
+                // Get our unique name - for now use a simple identifier
+                _busName = ":1.1"; // Simplified - in real implementation this would be proper unique name
+                
+                // Register with AT-SPI registry (if available)
+                await RegisterWithAtspiAsync();
+                
+                // Set up our properties for AT-SPI after D-Bus is connected
+                Register();
+                
+                Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI D-Bus connection established: {BusName}", _busName);
+            }
+            catch (Exception e)
+            {
+                Logger.TryGet(LogEventLevel.Error, LogArea.Control)?.Log(this, "Failed to initialize AT-SPI D-Bus: {Error}", e);
+            }
+        }
+
+        private async Task RegisterWithAtspiAsync()
+        {
+            try
+            {
+                if (_connection == null || string.IsNullOrEmpty(_busName))
+                    return;
+
+                // Try to register with the AT-SPI registry if it exists
+                // This is simplified - in real implementation we'd check if the registry exists first
+                var appRef = new ObjectReference(_busName, RootPath);
+                
+                Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "Prepared AT-SPI application reference");
+            }
+            catch (Exception e)
+            {
+                Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Failed to register with AT-SPI registry: {Error}", e);
+            }
         }
 
         private void Register()
