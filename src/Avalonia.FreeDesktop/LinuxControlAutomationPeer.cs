@@ -12,7 +12,7 @@ namespace Avalonia.FreeDesktop
     /// </summary>
     internal class LinuxControlAutomationPeer : ControlAutomationPeer
     {
-        private AtSpiAutomationPeer? _atSpiPeer;
+        private AtspiContext? _atspiContext;
 
         public LinuxControlAutomationPeer(Control control) : base(control)
         {
@@ -28,15 +28,14 @@ namespace Avalonia.FreeDesktop
         {
             try
             {
-                // Create and register the AT-SPI wrapper
-                _atSpiPeer = AtSpiAutomationPeer.Wrap(this);
-                _atSpiPeer?.RegisterWithAtSpi();
+                // Create the AT-SPI context using the global root instance
+                _atspiContext = AtspiRoot.Current?.CreateAutomationContext(this);
             }
             catch (Exception)
             {
                 // Accessibility should not break the application
                 // Log the error in a real implementation
-                _atSpiPeer = null;
+                _atspiContext = null;
             }
         }
 
@@ -45,12 +44,12 @@ namespace Avalonia.FreeDesktop
         /// </summary>
         ~LinuxControlAutomationPeer()
         {
-            _atSpiPeer?.UnregisterFromAtSpi();
+            _atspiContext = null;
         }
 
         /// <summary>
-        /// Gets the AT-SPI wrapper for this automation peer.
+        /// Gets the AT-SPI context for this automation peer.
         /// </summary>
-        internal AtSpiAutomationPeer? AtSpiPeer => _atSpiPeer;
+        internal AtspiContext? AtspiContext => _atspiContext;
     }
 }
