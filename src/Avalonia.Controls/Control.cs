@@ -464,18 +464,28 @@ namespace Avalonia.Controls
         /// <returns>The type-specific <see cref="AutomationPeer"/> implementation.</returns>
         protected virtual AutomationPeer? OnCreateAutomationPeer()
         {
+            Console.WriteLine($"🔧 Control.OnCreateAutomationPeer called for {GetType().Name} (Name: {Name ?? "NULL"})");
+            
             // Check if a platform-specific automation peer factory is available
             var factory = AvaloniaLocator.Current.GetService<IAutomationPeerFactory>();
+            Console.WriteLine($"   Factory available: {factory != null} ({factory?.GetType().Name ?? "NULL"})");
+            
             if (factory != null)
             {
                 var platformPeer = factory.CreateAutomationPeer(this);
                 if (platformPeer != null)
                 {
+                    Console.WriteLine($"   ✅ Factory created: {platformPeer.GetType().Name}");
                     return platformPeer;
+                }
+                else
+                {
+                    Console.WriteLine($"   ⚠️  Factory returned null for {GetType().Name}");
                 }
             }
             
             // Fall back to the default ControlAutomationPeer
+            Console.WriteLine($"   📋 Creating default ControlAutomationPeer for {GetType().Name}");
             return new ControlAutomationPeer(this);
         }
 

@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls;
 using Avalonia.FreeDesktop.Atspi;
@@ -11,7 +12,17 @@ namespace Avalonia.FreeDesktop
         {
             Dispatcher.UIThread.VerifyAccess();
 
-            var controlType = peer.GetAutomationControlType();
+            // If this is a LinuxControlAutomationPeer wrapper, use the wrapped peer's control type
+            AutomationPeer actualPeer = peer;
+            if (peer is LinuxControlAutomationPeer linuxPeer && linuxPeer.WrappedPeer != null)
+            {
+                actualPeer = linuxPeer.WrappedPeer;
+                Console.WriteLine($"🔧 AtspiContextFactory: Using wrapped peer {actualPeer.GetType().Name} instead of {peer.GetType().Name}");
+            }
+
+            var controlType = actualPeer.GetAutomationControlType();
+            Console.WriteLine($"🔧 AtspiContextFactory: Creating context for {actualPeer.GetType().Name} with ControlType: {controlType}");
+            
             var role = controlType switch
             {
                 AutomationControlType.Button => AtspiRole.ATSPI_ROLE_PUSH_BUTTON,
@@ -57,6 +68,7 @@ namespace Avalonia.FreeDesktop
                 _ => AtspiRole.ATSPI_ROLE_UNKNOWN
             };
 
+            Console.WriteLine($"🎯 AtspiContextFactory: Mapped {controlType} -> {role}");
             return new AtspiContext(root, peer, role);
         }
     }

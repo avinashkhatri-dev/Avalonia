@@ -8,7 +8,7 @@ using Tmds.DBus.Protocol;
 
 namespace Avalonia.FreeDesktop.Atspi
 {
-    internal enum AtspiRole
+    public enum AtspiRole
     {
         ATSPI_ROLE_INVALID,
         ATSPI_ROLE_ACCELERATOR_LABEL,
@@ -146,7 +146,7 @@ namespace Avalonia.FreeDesktop.Atspi
         public ObjectPath Path { get; }
     }
 
-    internal readonly struct CacheItem
+    public readonly struct CacheItem
     {
         public CacheItem(
             ObjectReference path,
@@ -235,6 +235,24 @@ namespace Avalonia.FreeDesktop.Atspi
     {
         Task<ObjectReference> EmbedAsync(ObjectReference Plug);
         Task UnembedAsync(ObjectReference Plug);
+    }
+
+    internal interface IComponent
+    {
+        Task<bool> ContainsAsync(int x, int y, uint coord_type);
+        Task<ObjectReference> GetAccessibleAtPointAsync(int x, int y, uint coord_type);
+        Task<(int, int, int, int)> GetExtentsAsync(uint coord_type);
+        Task<(int, int)> GetPositionAsync(uint coord_type);
+        Task<(int, int)> GetSizeAsync();
+        Task<uint> GetLayerAsync();
+        Task<short> GetMDIZOrderAsync();
+        Task<bool> GrabFocusAsync();
+        Task<double> GetAlphaAsync();
+        Task<bool> SetExtentsAsync(int x, int y, int width, int height, uint coord_type);
+        Task<bool> SetPositionAsync(int x, int y, uint coord_type);
+        Task<bool> SetSizeAsync(int width, int height);
+        Task ScrollToAsync(uint type);
+        Task<bool> ScrollToPointAsync(uint coord_type, int x, int y);
     }
 
     internal class AccessibleProperties
