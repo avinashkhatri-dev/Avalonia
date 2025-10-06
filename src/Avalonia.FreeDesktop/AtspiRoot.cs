@@ -147,19 +147,33 @@ namespace Avalonia.FreeDesktop
         {
             try
             {
-                // Connect to accessibility bus
-                var accessibilityBusAddress = GetAccessibilityBusAddress();
-                if (string.IsNullOrEmpty(accessibilityBusAddress))
+                // CRITICAL: Reuse the main application's D-Bus connection instead of creating a new one
+                // This ensures AT-SPI objects are registered on the same service as the main app
+                _connection = DBusHelper.DefaultConnection;
+                
+                if (_connection == null)
                 {
-                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Could not find accessibility bus address");
-                    return;
-                }
+                    Console.WriteLine("[AtspiRoot] ❌ Main D-Bus connection not available, creating fallback connection");
+                    
+                    // Fallback: create our own connection if main one isn't available
+                    var accessibilityBusAddress = GetAccessibilityBusAddress();
+                    if (string.IsNullOrEmpty(accessibilityBusAddress))
+                    {
+                        Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Could not find accessibility bus address");
+                        return;
+                    }
 
-                _connection = new Connection(accessibilityBusAddress);
-                await _connection.ConnectAsync();
+                    _connection = new Connection(accessibilityBusAddress);
+                    await _connection.ConnectAsync();
+                }
+                else
+                {
+                    Console.WriteLine($"[AtspiRoot] ✅ Reusing main application D-Bus connection");
+                }
                 
                 // Get our unique name from the D-Bus connection
                 _busName = _connection.UniqueName;
+                Console.WriteLine($"[AtspiRoot] 🚀 Using D-Bus service: {_busName}");
                 
                 // Register with AT-SPI registry
                 await RegisterWithAtspiAsync();
@@ -187,11 +201,11 @@ namespace Avalonia.FreeDesktop
             
             Exception? lastException = null;
             
-            // Strategy 1: Try accessibility bus
+            // Strategy 1: Try main InitializeDBusAsync (which now reuses main connection)
             try
             {
                 await InitializeDBusAsync();
-                Console.WriteLine("[AtspiRoot] Force strategy 1 (accessibility bus) succeeded");
+                Console.WriteLine("[AtspiRoot] Force strategy 1 (main connection reuse) succeeded");
                 return;
             }
             catch (Exception ex)
@@ -210,6 +224,7 @@ namespace Avalonia.FreeDesktop
                     _connection = new Connection(sessionBusAddress);
                     await _connection.ConnectAsync();
                     _busName = _connection.UniqueName;
+                    Console.WriteLine($"[AtspiRoot] 🚀 Using fallback D-Bus service: {_busName}");
                     
                     // Try to register with AT-SPI registry (might fail but that's ok)
                     try
@@ -491,6 +506,12 @@ namespace Avalonia.FreeDesktop
                 // Create PathHandler for the root object
                 var pathHandler = new PathHandler(RootPath);
                 pathHandler.Add(rootHandler);
+                
+                // Add introspection support for the root object
+                var introspectionXml = GenerateRootIntrospectionXml();
+                var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
+                pathHandler.Add(introspectionHandler);
+                
                 _connection.AddMethodHandler(pathHandler);
                 
                 Console.WriteLine($"[AtspiRoot] ✅ Successfully registered AT-SPI root object at: {RootPath}");
@@ -500,6 +521,72 @@ namespace Avalonia.FreeDesktop
                 Console.WriteLine($"[AtspiRoot] ❌ Failed to register root D-Bus handler: {e.Message}");
                 Console.WriteLine($"[AtspiRoot] Stack trace: {e.StackTrace}");
             }
+        }
+
+        private string GenerateRootIntrospectionXml()
+        {
+            Console.WriteLine($"[AtspiRoot] 🔧 Generating root introspection XML for {RootPath}");
+            
+            // Generate introspection XML for the root application object
+            var xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<node>
+  <interface name=""org.a11y.atspi.Accessible"">
+    <method name=""GetChildAtIndex"">
+      <arg type=""i"" direction=""in"" />
+      <arg type=""(so)"" direction=""out"" />
+    </method>
+    <method name=""GetChildren"">
+      <arg type=""a(so)"" direction=""out"" />
+    </method>
+    <method name=""GetIndexInParent"">
+      <arg type=""i"" direction=""out"" />
+    </method>
+    <method name=""GetRelationSet"">
+      <arg type=""a(ua(so))"" direction=""out"" />
+    </method>
+    <method name=""GetRole"">
+      <arg type=""u"" direction=""out"" />
+    </method>
+    <method name=""GetRoleName"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""GetLocalizedRoleName"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""GetState"">
+      <arg type=""au"" direction=""out"" />
+    </method>
+    <method name=""GetAttributes"">
+      <arg type=""a{ss}"" direction=""out"" />
+    </method>
+    <method name=""GetApplication"">
+      <arg type=""(so)"" direction=""out"" />
+    </method>
+    <method name=""GetInterfaces"">
+      <arg type=""as"" direction=""out"" />
+    </method>
+    <property name=""Name"" type=""s"" access=""read"" />
+    <property name=""Description"" type=""s"" access=""read"" />
+    <property name=""Parent"" type=""(so)"" access=""read"" />
+    <property name=""ChildCount"" type=""i"" access=""read"" />
+  </interface>
+  <interface name=""org.a11y.atspi.Application"">
+    <property name=""ToolkitName"" type=""s"" access=""read"" />
+    <property name=""Version"" type=""s"" access=""read"" />
+    <property name=""Id"" type=""i"" access=""read"" />
+    <method name=""GetApplicationInterfaces"">
+      <arg type=""as"" direction=""out"" />
+    </method>
+  </interface>
+  <interface name=""org.freedesktop.DBus.Introspectable"">
+    <method name=""Introspect"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+  </interface>
+</node>";
+        
+            Console.WriteLine($"[AtspiRoot] ✅ Generated root introspection XML ({xml.Length} chars)");
+            return xml;
         }
 
         public AtspiContext GetOrCreateAutomationContext(AutomationPeer peer)

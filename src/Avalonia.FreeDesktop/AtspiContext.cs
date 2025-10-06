@@ -70,7 +70,18 @@ namespace Avalonia.FreeDesktop
             {
                 // Create individual PathHandler for this specific object path
                 var pathHandler = new PathHandler(ObjectPath.ToString());
+                
+                // Add the main AT-SPI accessible handler
                 pathHandler.Add(_handler);
+                
+                // Add introspection support for D-Bus discovery
+                var introspectionXml = GenerateIntrospectionXml();
+                var introspectionHandler = new AtspiIntrospectionHandler(connection, introspectionXml);
+                pathHandler.Add(introspectionHandler);
+                
+                Console.WriteLine($"[AtspiContext] 🔍 Added introspection handler to PathHandler for {ObjectPath}");
+                Console.WriteLine($"[AtspiContext] 📋 PathHandler now has 2 handlers: AT-SPI + Introspection");
+                
                 connection.AddMethodHandler(pathHandler);
                 
                 Console.WriteLine($"[AtspiContext] ✅ Successfully registered AT-SPI object at: {ObjectPath}");
@@ -85,6 +96,66 @@ namespace Avalonia.FreeDesktop
             Console.WriteLine($"[AtspiContext] ❌ Failed to register D-Bus handler for {ObjectPath}: {e.Message}");
             Console.WriteLine($"[AtspiContext] Stack trace: {e.StackTrace}");
         }
+    }
+
+    private string GenerateIntrospectionXml()
+    {
+        Console.WriteLine($"[AtspiContext] 🔧 Generating introspection XML for {ObjectPath}");
+        
+        // Generate introspection XML for this AT-SPI object
+        var xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<node>
+  <interface name=""org.a11y.atspi.Accessible"">
+    <method name=""GetChildAtIndex"">
+      <arg type=""i"" direction=""in"" />
+      <arg type=""(so)"" direction=""out"" />
+    </method>
+    <method name=""GetChildren"">
+      <arg type=""a(so)"" direction=""out"" />
+    </method>
+    <method name=""GetIndexInParent"">
+      <arg type=""i"" direction=""out"" />
+    </method>
+    <method name=""GetRelationSet"">
+      <arg type=""a(ua(so))"" direction=""out"" />
+    </method>
+    <method name=""GetRole"">
+      <arg type=""u"" direction=""out"" />
+    </method>
+    <method name=""GetRoleName"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""GetLocalizedRoleName"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""GetState"">
+      <arg type=""au"" direction=""out"" />
+    </method>
+    <method name=""GetAttributes"">
+      <arg type=""a{ss}"" direction=""out"" />
+    </method>
+    <method name=""GetApplication"">
+      <arg type=""(so)"" direction=""out"" />
+    </method>
+    <method name=""GetInterfaces"">
+      <arg type=""as"" direction=""out"" />
+    </method>
+    <property name=""Name"" type=""s"" access=""read"" />
+    <property name=""Description"" type=""s"" access=""read"" />
+    <property name=""Parent"" type=""(so)"" access=""read"" />
+    <property name=""ChildCount"" type=""i"" access=""read"" />
+  </interface>
+  <interface name=""org.a11y.atspi.Component"">
+  </interface>
+  <interface name=""org.freedesktop.DBus.Introspectable"">
+    <method name=""Introspect"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+  </interface>
+</node>";
+
+        Console.WriteLine($"[AtspiContext] ✅ Generated introspection XML ({xml.Length} chars)");
+        return xml;
     }        public ObjectPath ObjectPath { get; }
 
         public CacheItem ToCacheItem()

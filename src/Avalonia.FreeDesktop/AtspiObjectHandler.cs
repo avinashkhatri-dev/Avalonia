@@ -10,6 +10,7 @@ namespace Avalonia.FreeDesktop
 {
     /// <summary>
     /// Concrete implementation of D-Bus AT-SPI handlers for Avalonia controls
+    /// Includes introspection support for proper D-Bus discovery
     /// </summary>
     internal class AtspiObjectHandler : OrgA11yAtspiAccessibleHandler
     {

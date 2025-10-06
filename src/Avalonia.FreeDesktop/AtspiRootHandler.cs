@@ -11,8 +11,8 @@ namespace Avalonia.FreeDesktop
 {
     /// <summary>
     /// Concrete implementation of D-Bus AT-SPI handlers for the root application object
-    /// This handler only inherits from OrgA11yAtspiAccessibleHandler but manually implements
-    /// the application interface methods through delegation.
+    /// This handler inherits from OrgA11yAtspiAccessibleHandler and adds introspection support
+    /// for proper D-Bus discovery by accessibility tools like accerciser.
     /// </summary>
     internal class AtspiRootHandler : OrgA11yAtspiAccessibleHandler
     {
