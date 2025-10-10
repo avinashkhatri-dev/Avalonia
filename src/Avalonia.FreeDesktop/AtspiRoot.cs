@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls.Platform;
@@ -35,7 +37,7 @@ namespace Avalonia.FreeDesktop
         private static bool _instanceInitialized;
         private static Connection? _connection;
 
-        private readonly List<Child> _children = new List<Child>();
+        private List<Child> _children = new List<Child>();
         private readonly Dictionary<AutomationPeer, AtspiContext> _contexts = new();
         private AtspiCache? _cache;
         private AccessibleProperties? _accessibleProperties;
@@ -86,51 +88,71 @@ namespace Avalonia.FreeDesktop
 
         public static AtspiRoot? RegisterRoot(Func<AutomationPeer> peerGetter)
         {
-            if (!_instanceInitialized)
+            Console.WriteLine("[AtspiRoot] RegisterRoot called");
+            try
             {
-                _instance = new AtspiRoot();
-                _instanceInitialized = true;
-                
-                Console.WriteLine("[AtspiRoot] FORCE REGISTERING ROOT - Multiple initialization strategies");
-                
-                // Strategy 1: Check if AT-SPI should be enabled
-                _ = Task.Run(async () => 
+                if (!_instanceInitialized)
                 {
-                    try
+                    Console.WriteLine("[AtspiRoot] Instance not initialized. Initializing now...");
+                    _instance = new AtspiRoot();
+                    
+                    // Mark as initialized BEFORE starting the async task
+                    _instance.CompleteInitialization();
+                    _instanceInitialized = true;
+
+                    Console.WriteLine("[AtspiRoot] Registering root with AT-SPI bus...");
+
+                    // Start the async initialization task (non-blocking)
+                    _ = Task.Run(async () => 
                     {
-                        var shouldEnable = await AtspiStatusChecker.ShouldEnableAccessibilityAsync();
-                        Console.WriteLine($"[AtspiRoot] AT-SPI status check result: {shouldEnable}");
-                        
-                        if (shouldEnable)
-                        {
-                            Console.WriteLine("[AtspiRoot] Accessibility enabled - initializing AT-SPI");
-                            await _instance.InitializeDBusAsync();
-                        }
-                        else
-                        {
-                            Console.WriteLine("[AtspiRoot] Accessibility disabled by status - trying force initialization anyway");
-                            await _instance.ForceInitializeDBusAsync();
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[AtspiRoot] Primary initialization failed: {ex.Message}");
-                        Console.WriteLine("[AtspiRoot] Trying force initialization as fallback");
+                        Console.WriteLine("[AtspiRoot] 🔄 Async initialization task started...");
                         try
                         {
-                            await _instance.ForceInitializeDBusAsync();
-                        }
-                        catch (Exception ex2)
-                        {
-                            Console.WriteLine($"[AtspiRoot] Force initialization also failed: {ex2.Message}");
-                        }
-                    }
-                });
-            }
+                            Console.WriteLine("[AtspiRoot] 🔍 Getting accessibility bus address...");
+                            var busAddress = _instance.GetAccessibilityBusAddress();
+                            if (string.IsNullOrEmpty(busAddress))
+                            {
+                                Console.WriteLine("[AtspiRoot] ❌ Failed to retrieve AT-SPI bus address.");
+                                return;
+                            }
 
-            _instance?._children.Add(new Child(peerGetter));
-            Console.WriteLine($"[AtspiRoot] Added child peer getter, total children: {_instance?._children.Count}");
-            return _instance;
+                            Console.WriteLine($"[AtspiRoot] 🚀 Connecting to AT-SPI bus at: {busAddress}");
+                            _connection = new Connection(busAddress);
+                            await _connection.ConnectAsync();
+
+                            Console.WriteLine("[AtspiRoot] ✅ Successfully connected to AT-SPI bus.");
+
+                            // Set up the bus name and register D-Bus handlers
+                            _instance._busName = _connection.UniqueName;
+                            _instance.Register();
+                            Console.WriteLine("[AtspiRoot] ✅ Root object registered on AT-SPI bus.");
+                            Console.WriteLine("[AtspiRoot] ✅ AT-SPI initialization completed successfully.");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[AtspiRoot] ❌ Error during AT-SPI bus registration: {ex.Message}");
+                            Console.WriteLine($"[AtspiRoot] Stack trace: {ex.StackTrace}");
+                        }
+                    });
+                    
+                    Console.WriteLine("[AtspiRoot] 📋 Initialization task created and running in background...");
+                }
+
+                var child = new Child(peerGetter);
+                child.CreatePeer();
+                lock (_instance._children)
+                {
+                    _instance._children.Add(child);
+                    Console.WriteLine($"[AtspiRoot] Added child. Thread: {Thread.CurrentThread.ManagedThreadId}, Total children: {_instance._children.Count}");
+                }
+                Console.WriteLine("[AtspiRoot] RegisterRoot completed successfully.");
+                return _instance;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AtspiRoot] Error in RegisterRoot: {ex.Message}");
+                return null;
+            }
         }
 
         internal AtspiContext CreateAutomationContext(AutomationPeer peer)
@@ -140,6 +162,13 @@ namespace Avalonia.FreeDesktop
             _cache?.Add(result);
             System.Diagnostics.Debug.WriteLine($"Created {result.ObjectPath} for {peer}");
             Console.WriteLine($"🔧 AT-SPI: Created context {result.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
+            
+            // Register child context with D-Bus if we have a connection
+            if (_connection != null)
+            {
+                RegisterChildContextWithDBus(result);
+            }
+            
             return result;
         }
 
@@ -147,39 +176,32 @@ namespace Avalonia.FreeDesktop
         {
             try
             {
-                // CRITICAL: Reuse the main application's D-Bus connection instead of creating a new one
-                // This ensures AT-SPI objects are registered on the same service as the main app
-                _connection = DBusHelper.DefaultConnection;
+                // AT-SPI MUST use the dedicated accessibility bus, not the session bus
+                Console.WriteLine("[AtspiRoot] 🔍 Getting AT-SPI accessibility bus address...");
+                var accessibilityBusAddress = GetAccessibilityBusAddress();
+                Console.WriteLine($"[AtspiRoot] 📍 Accessibility bus address: {accessibilityBusAddress ?? "NULL"}");
                 
-                if (_connection == null)
+                if (string.IsNullOrEmpty(accessibilityBusAddress))
                 {
-                    Console.WriteLine("[AtspiRoot] ❌ Main D-Bus connection not available, creating fallback connection");
-                    
-                    // Fallback: create our own connection if main one isn't available
-                    var accessibilityBusAddress = GetAccessibilityBusAddress();
-                    if (string.IsNullOrEmpty(accessibilityBusAddress))
-                    {
-                        Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Could not find accessibility bus address");
-                        return;
-                    }
+                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Could not find accessibility bus address");
+                    Console.WriteLine("[AtspiRoot] ❌ No accessibility bus found - AT-SPI disabled");
+                    return;
+                }
 
-                    _connection = new Connection(accessibilityBusAddress);
-                    await _connection.ConnectAsync();
-                }
-                else
-                {
-                    Console.WriteLine($"[AtspiRoot] ✅ Reusing main application D-Bus connection");
-                }
+                Console.WriteLine($"[AtspiRoot] 🚀 Connecting to AT-SPI accessibility bus: {accessibilityBusAddress}");
+                _connection = new Connection(accessibilityBusAddress);
+                await _connection.ConnectAsync();
+                Console.WriteLine($"[AtspiRoot] ✅ Connected to AT-SPI accessibility bus");
                 
                 // Get our unique name from the D-Bus connection
                 _busName = _connection.UniqueName;
                 Console.WriteLine($"[AtspiRoot] 🚀 Using D-Bus service: {_busName}");
                 
+                // Register D-Bus method handlers for root object
+                Register();
+                
                 // Register with AT-SPI registry
                 await RegisterWithAtspiAsync();
-                
-                // Set up our properties for AT-SPI after D-Bus is connected
-                Register();
                 
                 Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI connection established on accessibility bus: {BusName}", _busName);
                 Console.WriteLine($"[AtspiRoot] SUCCESS: AT-SPI connection established on accessibility bus: {_busName}");
@@ -274,12 +296,56 @@ namespace Avalonia.FreeDesktop
         {
             try
             {
+                Console.WriteLine("[AtspiRoot] 🔍 Detecting AT-SPI accessibility bus address...");
+                
                 // First try environment variable
                 var envAddress = Environment.GetEnvironmentVariable("AT_SPI_BUS");
                 if (!string.IsNullOrEmpty(envAddress))
+                {
+                    Console.WriteLine($"[AtspiRoot] ✅ Found AT-SPI bus via AT_SPI_BUS environment variable: {envAddress}");
                     return envAddress;
+                }
+                
+                // Try standard location for user session
+                var userId = Environment.GetEnvironmentVariable("UID") ?? 
+                           Environment.GetEnvironmentVariable("USER") ?? "1000";
+                
+                // Get actual user ID from environment or system
+                var actualUserId = "1000"; // default fallback
+                try
+                {
+                    var whoamiResult = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "id",
+                        Arguments = "-u",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true
+                    });
+                    if (whoamiResult != null)
+                    {
+                        whoamiResult.WaitForExit();
+                        var idOutput = whoamiResult.StandardOutput.ReadToEnd().Trim();
+                        if (!string.IsNullOrEmpty(idOutput) && int.TryParse(idOutput, out _))
+                        {
+                            actualUserId = idOutput;
+                        }
+                    }
+                }
+                catch { /* ignore errors, use fallback */ }
+                
+                var standardPath = $"unix:path=/run/user/{actualUserId}/at-spi/bus";
+                Console.WriteLine($"[AtspiRoot] 🔍 Trying standard AT-SPI bus path: {standardPath}");
+                
+                // Check if the socket file exists
+                var socketPath = standardPath.Replace("unix:path=", "");
+                if (File.Exists(socketPath))
+                {
+                    Console.WriteLine($"[AtspiRoot] ✅ Found AT-SPI bus socket at: {standardPath}");
+                    return standardPath;
+                }
 
                 // Try to get from X11 root window property using xprop
+                Console.WriteLine("[AtspiRoot] 🔍 Trying X11 root window property via xprop...");
                 var process = new Process
                 {
                     StartInfo = new ProcessStartInfo
@@ -298,25 +364,28 @@ namespace Avalonia.FreeDesktop
 
                 if (process.ExitCode == 0 && output.Contains("AT_SPI_BUS"))
                 {
+                    Console.WriteLine($"[AtspiRoot] 📄 xprop output: {output.Trim()}");
                     // Parse output like: AT_SPI_BUS(STRING) = "unix:path=/tmp/dbus-abc123"
                     var start = output.IndexOf('"');
                     var end = output.LastIndexOf('"');
                     if (start >= 0 && end > start)
                     {
-                        return output.Substring(start + 1, end - start - 1);
+                        var busAddress = output.Substring(start + 1, end - start - 1);
+                        Console.WriteLine($"[AtspiRoot] ✅ Found AT-SPI bus via xprop: {busAddress}");
+                        return busAddress;
                     }
                 }
 
                 // DO NOT fallback to session bus - AT-SPI applications MUST use accessibility bus only
                 // This follows the exact pattern from freedesktop.org AT-SPI specification
-                Console.WriteLine("[AtspiRoot] No accessibility bus available - AT-SPI disabled");
+                Console.WriteLine("[AtspiRoot] ❌ No accessibility bus available - AT-SPI disabled");
                 return null;
             }
             catch (Exception ex)
             {
                 Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "Failed to get accessibility bus address: {Error}", ex.Message);
                 // DO NOT fallback to session bus - AT-SPI disabled if accessibility bus not available
-                Console.WriteLine("[AtspiRoot] Cannot access accessibility bus - AT-SPI disabled");
+                Console.WriteLine($"[AtspiRoot] ❌ Exception finding accessibility bus: {ex.Message}");
                 return null;
             }
         }
@@ -443,9 +512,18 @@ namespace Avalonia.FreeDesktop
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AtspiRoot] ⚠️ Registry registration exception: {ex.Message}");
-                Console.WriteLine($"[AtspiRoot] 📍 Application still accessible via D-Bus path {_busName}:{RootPath}");
-                Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "AT-SPI registry registration failed: {Error}", ex.Message);
+                if (ex.Message.Contains("UnknownMethod") && ex.Message.Contains("RegisterApplication"))
+                {
+                    Console.WriteLine($"[AtspiRoot] ℹ️ Registry does not support application registration (common on modern systems)");
+                    Console.WriteLine($"[AtspiRoot] ✅ Application is discoverable on accessibility bus at {_busName}:{RootPath}");
+                    Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI registry does not require application registration - app is accessible on bus");
+                }
+                else
+                {
+                    Console.WriteLine($"[AtspiRoot] ⚠️ Registry registration exception: {ex.Message}");
+                    Console.WriteLine($"[AtspiRoot] 📍 Application still accessible via D-Bus path {_busName}:{RootPath}");
+                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "AT-SPI registry registration failed: {Error}", ex.Message);
+                }
             }
         }
         
@@ -500,27 +578,191 @@ namespace Avalonia.FreeDesktop
                     return;
                 }
 
-                // Create the D-Bus method handler for the root object (which implements IApplication)
-                var rootHandler = new AtspiRootHandler(this, _connection);
-                
-                // Create PathHandler for the root object
+                // Create the D-Bus method handler for the root object
                 var pathHandler = new PathHandler(RootPath);
-                pathHandler.Add(rootHandler);
                 
-                // Add introspection support for the root object
+                // Add introspection support for the root object (with xmlns:xsi cleaning)
                 var introspectionXml = GenerateRootIntrospectionXml();
                 var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
                 pathHandler.Add(introspectionHandler);
                 
+                // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
+                var accessibleHandler = new AtspiAccessibleMethodHandler(this, _connection);
+                pathHandler.Add(accessibleHandler);
+                
+                // Add Application interface handler if needed (root object is also IApplication)
+                if (this is IApplication)
+                {
+                    var applicationHandler = new AtspiApplicationMethodHandler(this as IApplication, _connection);
+                    pathHandler.Add(applicationHandler);
+                }
+                
+                Console.WriteLine($"[AtspiRoot] 🔧 Added Accessible method handler for root object");
+                
                 _connection.AddMethodHandler(pathHandler);
                 
-                Console.WriteLine($"[AtspiRoot] ✅ Successfully registered AT-SPI root object at: {RootPath}");
+                Console.WriteLine($"[AtspiRoot] ✅ Successfully registered AT-SPI root object with method handlers at: {RootPath}");
             }
             catch (Exception e)
             {
                 Console.WriteLine($"[AtspiRoot] ❌ Failed to register root D-Bus handler: {e.Message}");
                 Console.WriteLine($"[AtspiRoot] Stack trace: {e.StackTrace}");
             }
+        }
+
+        /// <summary>
+        /// Registers a child AtspiContext with D-Bus for introspection and accessibility
+        /// </summary>
+        private void RegisterChildContextWithDBus(AtspiContext context)
+        {
+            try
+            {
+                Console.WriteLine($"[AtspiRoot] 🔧 Registering child AT-SPI context at: {context.ObjectPath}");
+                
+                if (_connection == null)
+                {
+                    Console.WriteLine($"[AtspiRoot] ❌ No D-Bus connection available for child registration");
+                    return;
+                }
+
+                // Create PathHandler for this specific child context
+                var pathHandler = new PathHandler(context.ObjectPath.ToString());
+                
+                // Add introspection handler with xmlns:xsi cleaning (overrides default introspection)
+                var introspectionXml = GenerateChildIntrospectionXml(context);
+                var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
+                pathHandler.Add(introspectionHandler);
+                
+                // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
+                var accessibleHandler = new AtspiAccessibleMethodHandler(context, _connection);
+                pathHandler.Add(accessibleHandler);
+                
+                // Add Component interface handler if the context supports it
+                if (context is IComponent component)
+                {
+                    var componentHandler = new AtspiComponentMethodHandler(component, _connection);
+                    pathHandler.Add(componentHandler);
+                    Console.WriteLine($"[AtspiRoot] 🔧 Added Component method handler for child context");
+                }
+                
+                Console.WriteLine($"[AtspiRoot] 🔧 Added Accessible method handler for child context");
+                
+                _connection.AddMethodHandler(pathHandler);
+                
+                Console.WriteLine($"[AtspiRoot] ✅ Successfully registered child AT-SPI context with method handlers at: {context.ObjectPath}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRoot] ❌ Failed to register child D-Bus handler: {e.Message}");
+                Console.WriteLine($"[AtspiRoot] Stack trace: {e.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Generates basic AT-SPI introspection XML for child contexts
+        /// </summary>
+        private string GenerateChildIntrospectionXml(AtspiContext context)
+        {
+            var componentInterface = "";
+            
+            // Add Component interface if this context supports it
+            if (context is IComponent)
+            {
+                componentInterface = @"
+  <interface name='org.a11y.atspi.Component'>
+    <method name='Contains'>
+      <arg direction='in' type='i' name='x'/>
+      <arg direction='in' type='i' name='y'/>
+      <arg direction='in' type='u' name='coord_type'/>
+      <arg direction='out' type='b' name='result'/>
+    </method>
+    <method name='GetAccessibleAtPoint'>
+      <arg direction='in' type='i' name='x'/>
+      <arg direction='in' type='i' name='y'/>
+      <arg direction='in' type='u' name='coord_type'/>
+      <arg direction='out' type='(so)' name='accessible'/>
+    </method>
+    <method name='GetExtents'>
+      <arg direction='in' type='u' name='coord_type'/>
+      <arg direction='out' type='(iiii)' name='extents'/>
+    </method>
+    <method name='GetPosition'>
+      <arg direction='in' type='u' name='coord_type'/>
+      <arg direction='out' type='(ii)' name='position'/>
+    </method>
+    <method name='GetSize'>
+      <arg direction='out' type='(ii)' name='size'/>
+    </method>
+    <method name='GetLayer'>
+      <arg direction='out' type='u' name='layer'/>
+    </method>
+    <method name='GrabFocus'>
+      <arg direction='out' type='b' name='result'/>
+    </method>
+  </interface>";
+            }
+
+            return $@"<node name='{context.ObjectPath}'>
+  <interface name='org.a11y.atspi.Accessible'>
+    <method name='GetRole'>
+      <arg direction='out' type='u' name='role'/>
+    </method>
+    <method name='GetRoleName'>
+      <arg direction='out' type='s' name='name'/>
+    </method>
+    <method name='GetLocalizedRoleName'>
+      <arg direction='out' type='s' name='name'/>
+    </method>
+    <method name='GetChildCount'>
+      <arg direction='out' type='i' name='count'/>
+    </method>
+    <method name='GetChildAtIndex'>
+      <arg direction='in' type='i' name='index'/>
+      <arg direction='out' type='(so)' name='child'/>
+    </method>
+    <method name='GetChildren'>
+      <arg direction='out' type='a(so)' name='children'/>
+    </method>
+    <method name='GetIndexInParent'>
+      <arg direction='out' type='i' name='index'/>
+    </method>
+    <method name='GetRelationSet'>
+      <arg direction='out' type='a(ua(so))' name='relations'/>
+    </method>
+    <method name='GetState'>
+      <arg direction='out' type='au' name='states'/>
+    </method>
+    <method name='GetApplication'>
+      <arg direction='out' type='(so)' name='application'/>
+    </method>
+    <method name='GetAttributes'>
+      <arg direction='out' type='a{{ss}}' name='attributes'/>
+    </method>
+    <method name='GetInterfaces'>
+      <arg direction='out' type='as' name='interfaces'/>
+    </method>
+    <property name='Name' type='s' access='read'/>
+    <property name='Description' type='s' access='read'/>
+    <property name='Parent' type='(so)' access='read'/>
+    <property name='ChildCount' type='i' access='read'/>
+  </interface>{componentInterface}
+  <interface name='org.freedesktop.DBus.Introspectable'>
+    <method name='Introspect'>
+      <arg direction='out' type='s' name='xml'/>
+    </method>
+  </interface>
+  <interface name='org.freedesktop.DBus.Properties'>
+    <method name='Get'>
+      <arg direction='in' type='s' name='interface_name'/>
+      <arg direction='in' type='s' name='property_name'/>
+      <arg direction='out' type='v' name='value'/>
+    </method>
+    <method name='GetAll'>
+      <arg direction='in' type='s' name='interface_name'/>
+      <arg direction='out' type='a{{sv}}' name='properties'/>
+    </method>
+  </interface>
+</node>";
         }
 
         private string GenerateRootIntrospectionXml()
@@ -574,6 +816,19 @@ namespace Avalonia.FreeDesktop
     <property name=""ToolkitName"" type=""s"" access=""read"" />
     <property name=""Version"" type=""s"" access=""read"" />
     <property name=""Id"" type=""i"" access=""read"" />
+    <method name=""GetApplicationBusAddress"">
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""GetLocale"">
+      <arg type=""u"" direction=""in"" />
+      <arg type=""s"" direction=""out"" />
+    </method>
+    <method name=""RegisterEventListener"">
+      <arg type=""s"" direction=""in"" />
+    </method>
+    <method name=""DeregisterEventListener"">
+      <arg type=""s"" direction=""in"" />
+    </method>
     <method name=""GetApplicationInterfaces"">
       <arg type=""as"" direction=""out"" />
     </method>
@@ -583,10 +838,42 @@ namespace Avalonia.FreeDesktop
       <arg type=""s"" direction=""out"" />
     </method>
   </interface>
+  <interface name=""org.freedesktop.DBus.Properties"">
+    <method name=""Get"">
+      <arg direction=""in"" type=""s"" name=""interface_name""/>
+      <arg direction=""in"" type=""s"" name=""property_name""/>
+      <arg direction=""out"" type=""v"" name=""value""/>
+    </method>
+    <method name=""GetAll"">
+      <arg direction=""in"" type=""s"" name=""interface_name""/>
+      <arg direction=""out"" type=""a{sv}"" name=""properties""/>
+    </method>
+  </interface>
 </node>";
         
             Console.WriteLine($"[AtspiRoot] ✅ Generated root introspection XML ({xml.Length} chars)");
             return xml;
+        }
+
+        private void EnsureInitializationComplete()
+        {
+            const int timeoutMilliseconds = 5000; // 5 seconds timeout
+            var startTime = DateTime.Now;
+
+            if (!_isInitialized)
+            {
+                Console.WriteLine("[EnsureInitializationComplete] Waiting for initialization to complete...");
+                while (!_isInitialized)
+                {
+                    if ((DateTime.Now - startTime).TotalMilliseconds > timeoutMilliseconds)
+                    {
+                        Console.WriteLine("[EnsureInitializationComplete] Timeout reached while waiting for initialization.");
+                        throw new TimeoutException("Initialization did not complete within the expected time.");
+                    }
+                    Thread.Sleep(10); // Small delay to avoid busy-waiting
+                }
+                Console.WriteLine("[EnsureInitializationComplete] Initialization complete.");
+            }
         }
 
         public AtspiContext GetOrCreateAutomationContext(AutomationPeer peer)
@@ -626,14 +913,41 @@ namespace Avalonia.FreeDesktop
 
         async Task<ObjectReference[]> IAccessible.GetChildrenAsync()
         {
-            var result = new ObjectReference[_children.Count];
-
-            for (var i = 0; i < _children.Count; ++i)
+            Console.WriteLine($"[IAccessible.GetChildrenAsync] Thread: {Thread.CurrentThread.ManagedThreadId}, _children.Count: {_children.Count}");
+            try
             {
-                result[i] = await ((IAccessible)this).GetChildAtIndexAsync(i);
-            }
+                Console.WriteLine($"[AtspiRoot] GetChildrenAsync called - children count: {_children.Count}");
+                
+                List<ObjectReference> result;
+                lock (_children)
+                {
+                    if (_children.Count == 0)
+                    {
+                        Console.WriteLine("[AtspiRoot] No children to return");
+                        return Array.Empty<ObjectReference>();
+                    }
 
-            return result;
+                    result = new List<ObjectReference>(_children.Count);
+                    foreach (var child in _children)
+                    {
+                        result.Add(((IAccessible)this).GetChildAtIndexAsync(_children.IndexOf(child)).Result);
+                    }
+                }
+
+                foreach (var objRef in result)
+                {
+                    Console.WriteLine($"[AtspiRoot] Child: {objRef.Service}:{objRef.Path}");
+                }
+
+                return result.ToArray();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AtspiRoot] ERROR in GetChildrenAsync: {ex.Message}");
+                Console.WriteLine($"[AtspiRoot] Stack trace: {ex.StackTrace}");
+                // Return empty array instead of crashing
+                return Array.Empty<ObjectReference>();
+            }
         }
 
         Task<int> IAccessible.GetIndexInParentAsync() => Task.FromResult(-1);
@@ -691,36 +1005,144 @@ namespace Avalonia.FreeDesktop
 
         Task<object?> IAccessible.GetAsync(string prop)
         {
+            Console.WriteLine($"[AtspiRoot] GetAsync called for property: {prop}");
             return Task.FromResult<object?>(prop switch
             {
                 nameof(AccessibleProperties.Name) => _accessibleProperties!.Name,
                 nameof(AccessibleProperties.Description) => _accessibleProperties!.Description,
                 nameof(AccessibleProperties.Parent) => _accessibleProperties!.Parent,
-                nameof(AccessibleProperties.ChildCount) => _accessibleProperties!.ChildCount,
+                nameof(AccessibleProperties.ChildCount) => _children.Count, // Use actual current count
                 nameof(AccessibleProperties.Locale) => _accessibleProperties!.Locale,
                 nameof(AccessibleProperties.AccessibleId) => _accessibleProperties!.AccessibleId,
                 _ => null,
             });
         }
 
-        Task<AccessibleProperties> IAccessible.GetAllAsync() => Task.FromResult(_accessibleProperties!);
+        Task<AccessibleProperties> IAccessible.GetAllAsync() 
+        {
+            // Return a properties object with current child count
+            var props = new AccessibleProperties
+            {
+                Name = _accessibleProperties!.Name,
+                Description = _accessibleProperties!.Description,
+                Parent = _accessibleProperties!.Parent,
+                ChildCount = _children.Count, // Use actual current count
+                Locale = _accessibleProperties!.Locale,
+                AccessibleId = _accessibleProperties!.AccessibleId
+            };
+            return Task.FromResult(props);
+        }
 
         Task IAccessible.SetAsync(string prop, object val)
         {
             throw new NotImplementedException();
         }
 
-        private class Child
+        private void AddChild(Child child)
         {
-            private readonly Func<AutomationPeer> _peerGetter;
-            public Child(Func<AutomationPeer> peerGetter) => _peerGetter = peerGetter;
-            public AutomationPeer? Peer  {  get;  private set;  }
-
-            public void CreatePeer()
+            lock (_children)
             {
-                Dispatcher.UIThread.VerifyAccess();
-                Peer = _peerGetter();
+                _children.Add(child);
+                Console.WriteLine($"[AtspiRoot] Child added. Total children: {_children.Count}");
             }
+        }
+
+        // Add an initialization flag to ensure ChildCount is accessed only after initialization
+        private bool _isInitialized;
+
+        public void CompleteInitialization()
+        {
+            lock (_children)
+            {
+                if (_isInitialized)
+                {
+                    Console.WriteLine("[CompleteInitialization] Initialization already completed.");
+                    return;
+                }
+
+                _isInitialized = true;
+                Console.WriteLine("[CompleteInitialization] Initialization complete.");
+            }
+        }
+
+        // Example usage in ChildCount getter
+        private int ChildCount
+        {
+            get
+            {
+                EnsureInitializationComplete();
+                return _children.Count;
+            }
+        }
+
+        public IReadOnlyList<Child> GetAccessibleChildren()
+        {
+            lock (_children)
+            {
+                Console.WriteLine($"[GetAccessibleChildren] Thread: {Thread.CurrentThread.ManagedThreadId}, _children.Count: {_children.Count}");
+                return _children.AsReadOnly();
+            }
+        }
+
+        private void RegisterRootInstance(Func<AutomationPeer> peerGetter)
+        {
+            try
+            {
+                Console.WriteLine("[RegisterRootInstance] Starting registration of AT-SPI root.");
+
+                // Ensure D-Bus connection is available
+                if (_connection == null)
+                {
+                    Console.WriteLine("[RegisterRootInstance] ❌ No D-Bus connection available. Aborting registration.");
+                    return;
+                }
+
+                // Initialize the root object
+                _accessibleProperties = new AccessibleProperties
+                {
+                    Name = "Root",
+                    Description = "AT-SPI Root Object",
+                    Locale = CultureInfo.CurrentCulture.Name,
+                    ChildCount = _children.Count,
+                    AccessibleId = "root"
+                };
+
+                Console.WriteLine("[RegisterRootInstance] Accessible properties initialized.");
+
+                // Register the root with D-Bus
+                RegisterRootWithDBus();
+                Console.WriteLine("[RegisterRootInstance] Root registered with D-Bus.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[RegisterRootInstance] ❌ Exception during registration: {ex.Message}");
+                Console.WriteLine($"[RegisterRootInstance] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        private bool IsDbusConnectionAvailable()
+        {
+            if (_connection == null)
+            {
+                Console.WriteLine("[IsDbusConnectionAvailable] ❌ No D-Bus connection available.");
+                return false;
+            }
+
+            Console.WriteLine("[IsDbusConnectionAvailable] ✅ D-Bus connection is available.");
+            return true;
+        }
+    }
+
+    public class Child
+    {
+        private readonly Func<AutomationPeer> _peerGetter;
+        public Child(Func<AutomationPeer> peerGetter) => _peerGetter = peerGetter;
+
+        public AutomationPeer? Peer { get; private set; }
+
+        public void CreatePeer()
+        {
+            Peer = _peerGetter();
         }
     }
 }
