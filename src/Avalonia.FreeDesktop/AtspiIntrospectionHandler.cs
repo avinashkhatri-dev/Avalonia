@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Tmds.DBus.Protocol;
@@ -7,8 +7,8 @@ using Tmds.DBus.SourceGenerator;
 namespace Avalonia.FreeDesktop
 {
     /// <summary>
-    /// Implements D-Bus introspection support for AT-SPI objects
-    /// This allows accessibility tools like accerciser to discover and enumerate our objects
+    /// Handles D-Bus introspection for AT-SPI objects
+    /// This allows accessibility tools to discover our objects
     /// </summary>
     internal class AtspiIntrospectionHandler : OrgFreedesktopDBusIntrospectableHandler
     {
@@ -21,39 +21,49 @@ namespace Avalonia.FreeDesktop
             _introspectionXml = introspectionXml;
             
             Console.WriteLine($"[AtspiIntrospectionHandler] 🔧 Created introspection handler");
-            Console.WriteLine($"[AtspiIntrospectionHandler] 📝 XML length: {introspectionXml.Length} characters");
-            Console.WriteLine($"[AtspiIntrospectionHandler] 🔌 Connection: {connection?.GetType().Name ?? "null"}");
+            Console.WriteLine($"[AtspiIntrospectionHandler] 📝 XML length: {introspectionXml?.Length ?? 0} characters");
         }
 
         public override Connection Connection => _connection;
 
         protected override async ValueTask<string> OnIntrospectAsync(Message request)
         {
-            Console.WriteLine($"[AtspiIntrospectionHandler] 🔍 Introspect method called!");
+            Console.WriteLine("[AtspiIntrospectionHandler] 🔍 INTROSPECT METHOD CALLED!");
             Console.WriteLine($"[AtspiIntrospectionHandler] Request path: {request.PathAsString}");
             Console.WriteLine($"[AtspiIntrospectionHandler] Request sender: {request.SenderAsString}");
-            Console.WriteLine($"[AtspiIntrospectionHandler] Original XML length: {_introspectionXml.Length} characters");
-            
-            // Remove xmlns:xsi attributes that cause busctl tree parsing errors
-            string cleanedXml = _introspectionXml;
-            
-            // Remove xmlns:xsi namespace declarations
-            cleanedXml = cleanedXml.Replace(" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"", "");
-            
-            // Remove any xsi:type attributes 
-            cleanedXml = System.Text.RegularExpressions.Regex.Replace(cleanedXml, @"\s+xsi:type=""[^""]*""", "");
-            
-            // Remove any other xsi: attributes
-            cleanedXml = System.Text.RegularExpressions.Regex.Replace(cleanedXml, @"\s+xsi:[^=]+=""[^""]*""", "");
-            
-            Console.WriteLine($"[AtspiIntrospectionHandler] Cleaned XML length: {cleanedXml.Length} characters");
-            
-            // Log the first few lines of the cleaned XML for verification
-            var xmlLines = cleanedXml.Split('\n');
-            Console.WriteLine($"[AtspiIntrospectionHandler] Cleaned XML preview: {xmlLines[0]}");
-            if (xmlLines.Length > 1) Console.WriteLine($"[AtspiIntrospectionHandler] Cleaned XML preview: {xmlLines[1]}");
-            
-            return cleanedXml;
+
+            var cleanXml = _introspectionXml;
+            if (!string.IsNullOrEmpty(cleanXml))
+            {
+                Console.WriteLine($"[AtspiIntrospectionHandler] Original XML length: {cleanXml.Length} characters");
+                Console.WriteLine($"[AtspiIntrospectionHandler] First 200 chars: {cleanXml.Substring(0, Math.Min(200, cleanXml.Length))}");
+
+                // Comprehensive xmlns:xsi cleaning - multiple patterns to catch all variations
+                cleanXml = Regex.Replace(cleanXml, @"\s+xmlns:xsi\s*=\s*""[^""]*""", "", RegexOptions.IgnoreCase);
+                cleanXml = Regex.Replace(cleanXml, @"\s+xmlns:xsi\s*=\s*'[^']*'", "", RegexOptions.IgnoreCase);
+                cleanXml = Regex.Replace(cleanXml, @"\s+xsi:[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*""[^""]*""", "", RegexOptions.IgnoreCase);
+                cleanXml = Regex.Replace(cleanXml, @"\s+xsi:[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*'[^']*'", "", RegexOptions.IgnoreCase);
+
+                // Additional cleanup - remove any remaining xsi: references
+                cleanXml = Regex.Replace(cleanXml, @"\s+xsi:\w+", "", RegexOptions.IgnoreCase);
+
+                // Log the cleaned XML for verification
+                Console.WriteLine("[AtspiIntrospectionHandler] XML after cleaning:");
+                Console.WriteLine(cleanXml);
+
+                Console.WriteLine($"[AtspiIntrospectionHandler] Cleaned XML length: {cleanXml.Length} characters");
+                Console.WriteLine($"[AtspiIntrospectionHandler] Cleaned first 200 chars: {cleanXml.Substring(0, Math.Min(200, cleanXml.Length))}");
+            }
+            else
+            {
+                Console.WriteLine("[AtspiIntrospectionHandler] Warning: introspection XML is null or empty");
+                cleanXml = "<?xml version=\"1.0\"?>\n<node>\n</node>";
+            }
+
+            Console.WriteLine($"[AtspiIntrospectionHandler] Generated XML length: {cleanXml.Length} characters");
+            Console.WriteLine("[AtspiIntrospectionHandler] Returning cleaned XML");
+
+            return cleanXml;
         }
     }
 }

@@ -39,6 +39,7 @@ namespace Avalonia.FreeDesktop
 
         private List<Child> _children = new List<Child>();
         private readonly Dictionary<AutomationPeer, AtspiContext> _contexts = new();
+        private readonly HashSet<string> _registeredPaths = new(); // Track D-Bus registered paths
         private AtspiCache? _cache;
         private AccessibleProperties? _accessibleProperties;
         private ApplicationProperties? _applicationProperties;
@@ -157,16 +158,35 @@ namespace Avalonia.FreeDesktop
 
         internal AtspiContext CreateAutomationContext(AutomationPeer peer)
         {
+            // Check if context already exists for this peer
+            if (_contexts.TryGetValue(peer, out var existingContext))
+            {
+                Console.WriteLine($"🔧 AT-SPI: Reusing existing context {existingContext.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
+                return existingContext;
+            }
+            
             var result = AtspiContextFactory.Create(this, peer);
             _contexts[peer] = result;
             _cache?.Add(result);
             System.Diagnostics.Debug.WriteLine($"Created {result.ObjectPath} for {peer}");
             Console.WriteLine($"🔧 AT-SPI: Created context {result.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
             
-            // Register child context with D-Bus if we have a connection
-            if (_connection != null)
+            // Only register child context with D-Bus if we have a connection, path not already registered, AND root is registered
+            if (_connection != null && 
+                !_registeredPaths.Contains(result.ObjectPath.ToString()) &&
+                _registeredPaths.Contains(RootPath))
             {
                 RegisterChildContextWithDBus(result);
+                _registeredPaths.Add(result.ObjectPath.ToString());
+                Console.WriteLine($"🔧 AT-SPI: Registered new path {result.ObjectPath} with D-Bus");
+            }
+            else if (_registeredPaths.Contains(result.ObjectPath.ToString()))
+            {
+                Console.WriteLine($"🔧 AT-SPI: Path {result.ObjectPath} already registered with D-Bus, skipping registration");
+            }
+            else if (!_registeredPaths.Contains(RootPath))
+            {
+                Console.WriteLine($"🔧 AT-SPI: Root not yet registered, deferring registration of {result.ObjectPath}");
             }
             
             return result;
@@ -578,30 +598,58 @@ namespace Avalonia.FreeDesktop
                     return;
                 }
 
+                // Skip if already registered
+                if (_registeredPaths.Contains(RootPath))
+                {
+                    Console.WriteLine($"[AtspiRoot] Root path {RootPath} already registered, skipping");
+                    return;
+                }
+
                 // Create the D-Bus method handler for the root object
                 var pathHandler = new PathHandler(RootPath);
                 
                 // Add introspection support for the root object (with xmlns:xsi cleaning)
                 var introspectionXml = GenerateRootIntrospectionXml();
                 var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
+                Console.WriteLine($"[AtspiRoot] 🔧 Created introspection handler for root: {introspectionHandler.GetType().Name}");
                 pathHandler.Add(introspectionHandler);
+                Console.WriteLine("[AtspiRoot] ✅ Introspection handler added to PathHandler.");
+                Console.WriteLine($"[AtspiRoot] 🔍 PathHandler now contains {pathHandler.Count} handlers");
                 
                 // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
                 var accessibleHandler = new AtspiAccessibleMethodHandler(this, _connection);
                 pathHandler.Add(accessibleHandler);
+                Console.WriteLine("[AtspiRoot] ✅ Accessible method handler added to PathHandler.");
+                Console.WriteLine($"[AtspiRoot] 🔍 PathHandler now contains {pathHandler.Count} handlers");
                 
                 // Add Application interface handler if needed (root object is also IApplication)
                 if (this is IApplication)
                 {
                     var applicationHandler = new AtspiApplicationMethodHandler(this as IApplication, _connection);
                     pathHandler.Add(applicationHandler);
+                    Console.WriteLine("[AtspiRoot] ✅ Application method handler added to PathHandler.");
                 }
                 
-                Console.WriteLine($"[AtspiRoot] 🔧 Added Accessible method handler for root object");
-                
+                Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler to D-Bus connection.");
+                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler path: {pathHandler.Path}");
+                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler handler count: {pathHandler.Count}");
                 _connection.AddMethodHandler(pathHandler);
-                
+                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler added to connection - now monitoring for D-Bus calls...");
+                _registeredPaths.Add(RootPath); // Track registration
                 Console.WriteLine($"[AtspiRoot] ✅ Successfully registered AT-SPI root object with method handlers at: {RootPath}");
+                
+                // Now register any pending child contexts that were created before root was ready
+                Console.WriteLine($"[AtspiRoot] 🔧 Registering pending child contexts...");
+                foreach (var context in _contexts.Values)
+                {
+                    if (!_registeredPaths.Contains(context.ObjectPath.ToString()))
+                    {
+                        RegisterChildContextWithDBus(context);
+                        _registeredPaths.Add(context.ObjectPath.ToString());
+                        Console.WriteLine($"🔧 AT-SPI: Registered pending path {context.ObjectPath} with D-Bus");
+                    }
+                }
+                Console.WriteLine($"[AtspiRoot] ✅ Pending child context registration completed.");
             }
             catch (Exception e)
             {
@@ -631,25 +679,36 @@ namespace Avalonia.FreeDesktop
                 // Add introspection handler with xmlns:xsi cleaning (overrides default introspection)
                 var introspectionXml = GenerateChildIntrospectionXml(context);
                 var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
+                Console.WriteLine($"[AtspiRoot] 🔧 Created introspection handler for child: {introspectionHandler.GetType().Name}");
                 pathHandler.Add(introspectionHandler);
+                Console.WriteLine("[AtspiRoot] ✅ Introspection handler added to PathHandler for child context.");
+                Console.WriteLine($"[AtspiRoot] 🔍 Child PathHandler now contains {pathHandler.Count} handlers");
                 
                 // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
                 var accessibleHandler = new AtspiAccessibleMethodHandler(context, _connection);
                 pathHandler.Add(accessibleHandler);
+                Console.WriteLine("[AtspiRoot] ✅ Accessible method handler added to PathHandler for child context.");
+                Console.WriteLine($"[AtspiRoot] 🔍 Child PathHandler now contains {pathHandler.Count} handlers");
                 
                 // Add Component interface handler if the context supports it
                 if (context is IComponent component)
                 {
                     var componentHandler = new AtspiComponentMethodHandler(component, _connection);
                     pathHandler.Add(componentHandler);
-                    Console.WriteLine($"[AtspiRoot] 🔧 Added Component method handler for child context");
+                    Console.WriteLine("[AtspiRoot] ✅ Component method handler added to PathHandler for child context.");
                 }
                 
-                Console.WriteLine($"[AtspiRoot] 🔧 Added Accessible method handler for child context");
-                
+                Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler for child context to D-Bus connection.");
+                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler path: {pathHandler.Path}");
+                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler handler count: {pathHandler.Count}");
                 _connection.AddMethodHandler(pathHandler);
-                
+                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler added to connection - now monitoring for D-Bus calls...");
                 Console.WriteLine($"[AtspiRoot] ✅ Successfully registered child AT-SPI context with method handlers at: {context.ObjectPath}");
+                
+                // Debug: Verify PathHandler registration
+                Console.WriteLine("[AtspiRoot] 🔍 Verifying PathHandler registration for child context...");
+                Console.WriteLine($"[AtspiRoot] PathHandler registered for: {context.ObjectPath}");
+                Console.WriteLine($"[AtspiRoot] Introspection XML preview: {introspectionXml.Substring(0, Math.Min(100, introspectionXml.Length))}");
             }
             catch (Exception e)
             {
@@ -768,8 +827,8 @@ namespace Avalonia.FreeDesktop
         private string GenerateRootIntrospectionXml()
         {
             Console.WriteLine($"[AtspiRoot] 🔧 Generating root introspection XML for {RootPath}");
-            
-            // Generate introspection XML for the root application object
+
+            // Ensure no unexpected attributes like xmlns:xsi are included
             var xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
 <node>
   <interface name=""org.a11y.atspi.Accessible"">
@@ -850,10 +909,10 @@ namespace Avalonia.FreeDesktop
     </method>
   </interface>
 </node>";
-        
-            Console.WriteLine($"[AtspiRoot] ✅ Generated root introspection XML ({xml.Length} chars)");
-            return xml;
-        }
+
+    Console.WriteLine($"[AtspiRoot] ✅ Generated root introspection XML ({xml.Length} chars)");
+    return xml;
+}
 
         private void EnsureInitializationComplete()
         {
@@ -1130,6 +1189,51 @@ namespace Avalonia.FreeDesktop
 
             Console.WriteLine("[IsDbusConnectionAvailable] ✅ D-Bus connection is available.");
             return true;
+        }
+
+        /// <summary>
+        /// Implements the GetAddress method for the org.a11y.Bus interface.
+        /// </summary>
+        /// <returns>The address of the AT-SPI bus.</returns>
+        public Task<string> GetAddressAsync()
+        {
+            Console.WriteLine("[AtspiRoot] GetAddress method called.");
+
+            // Return the bus address if available, otherwise return an empty string.
+            return Task.FromResult(_busName ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Implements the IsEnabled property for the org.a11y.Status interface.
+        /// </summary>
+        public bool IsEnabled => true; // Replace with actual logic if needed
+
+        /// <summary>
+        /// Implements the ScreenReaderEnabled property for the org.a11y.Status interface.
+        /// </summary>
+        public bool ScreenReaderEnabled => false; // Replace with actual logic if needed
+
+        /// <summary>
+        /// Implements the GetMachineId method for the org.freedesktop.DBus.Peer interface.
+        /// </summary>
+        /// <returns>The unique machine ID.</returns>
+        public Task<string> GetMachineIdAsync()
+        {
+            Console.WriteLine("[AtspiRoot] GetMachineId method called.");
+
+            // Return a placeholder machine ID. Replace with actual logic if needed.
+            return Task.FromResult(Guid.NewGuid().ToString());
+        }
+
+        /// <summary>
+        /// Implements the Ping method for the org.freedesktop.DBus.Peer interface.
+        /// </summary>
+        public Task PingAsync()
+        {
+            Console.WriteLine("[AtspiRoot] Ping method called.");
+
+            // Simply return a completed task to indicate success.
+            return Task.CompletedTask;
         }
     }
 
