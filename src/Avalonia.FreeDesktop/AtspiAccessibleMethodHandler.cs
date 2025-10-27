@@ -30,11 +30,12 @@ namespace Avalonia.FreeDesktop
 
         protected override async ValueTask<uint> OnGetRoleAsync(Message request)
         {
-            Console.WriteLine($"[AtspiAccessibleMethodHandler] 🔥 ANY D-BUS METHOD CALLED: GetRole() from {request.SenderAsString} for path {request.PathAsString}");
+            Console.WriteLine($"[AtspiAccessibleMethodHandler] 🔥 D-BUS METHOD CALLED: GetRole() from {request.SenderAsString} for path {request.PathAsString}");
             var role = await _accessible.GetRoleAsync();
             Console.WriteLine($"[AtspiAccessibleMethodHandler] GetRole() -> {role}");
             return role;
         }
+
 
         protected override async ValueTask<string> OnGetRoleNameAsync(Message request)
         {

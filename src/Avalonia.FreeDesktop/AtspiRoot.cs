@@ -607,29 +607,24 @@ namespace Avalonia.FreeDesktop
 
                 // Create the D-Bus method handler for the root object
                 var pathHandler = new PathHandler(RootPath);
-                
-                // Add introspection support for the root object (with xmlns:xsi cleaning)
-                var introspectionXml = GenerateRootIntrospectionXml();
-                var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
-                Console.WriteLine($"[AtspiRoot] 🔧 Created introspection handler for root: {introspectionHandler.GetType().Name}");
-                pathHandler.Add(introspectionHandler);
-                Console.WriteLine("[AtspiRoot] ✅ Introspection handler added to PathHandler.");
-                Console.WriteLine($"[AtspiRoot] 🔍 PathHandler now contains {pathHandler.Count} handlers");
-                
-                // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
+
+                // Add Introspectable handler FIRST to ensure it takes precedence
+                pathHandler.Add(new AtspiIntrospectionHandler(_connection, null));
+                Console.WriteLine("[AtspiRoot] ✅ Introspectable handler added to PathHandler (registered first).");
+
+                // Add Accessible method handler
                 var accessibleHandler = new AtspiAccessibleMethodHandler(this, _connection);
                 pathHandler.Add(accessibleHandler);
                 Console.WriteLine("[AtspiRoot] ✅ Accessible method handler added to PathHandler.");
                 Console.WriteLine($"[AtspiRoot] 🔍 PathHandler now contains {pathHandler.Count} handlers");
-                
-                // Add Application interface handler if needed (root object is also IApplication)
+
                 if (this is IApplication)
                 {
                     var applicationHandler = new AtspiApplicationMethodHandler(this as IApplication, _connection);
                     pathHandler.Add(applicationHandler);
                     Console.WriteLine("[AtspiRoot] ✅ Application method handler added to PathHandler.");
                 }
-                
+
                 Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler to D-Bus connection.");
                 Console.WriteLine($"[AtspiRoot] 🔧 PathHandler path: {pathHandler.Path}");
                 Console.WriteLine($"[AtspiRoot] 🔧 PathHandler handler count: {pathHandler.Count}");
@@ -666,49 +661,20 @@ namespace Avalonia.FreeDesktop
             try
             {
                 Console.WriteLine($"[AtspiRoot] 🔧 Registering child AT-SPI context at: {context.ObjectPath}");
-                
                 if (_connection == null)
                 {
                     Console.WriteLine($"[AtspiRoot] ❌ No D-Bus connection available for child registration");
                     return;
                 }
-
                 // Create PathHandler for this specific child context
                 var pathHandler = new PathHandler(context.ObjectPath.ToString());
-                
-                // Add introspection handler with xmlns:xsi cleaning (overrides default introspection)
-                var introspectionXml = GenerateChildIntrospectionXml(context);
-                var introspectionHandler = new AtspiIntrospectionHandler(_connection, introspectionXml);
-                Console.WriteLine($"[AtspiRoot] 🔧 Created introspection handler for child: {introspectionHandler.GetType().Name}");
-                pathHandler.Add(introspectionHandler);
-                Console.WriteLine("[AtspiRoot] ✅ Introspection handler added to PathHandler for child context.");
-                Console.WriteLine($"[AtspiRoot] 🔍 Child PathHandler now contains {pathHandler.Count} handlers");
-                
-                // CRITICAL: Add actual AT-SPI method handlers for accessibility queries
+                // Add Accessible method handler
                 var accessibleHandler = new AtspiAccessibleMethodHandler(context, _connection);
                 pathHandler.Add(accessibleHandler);
-                Console.WriteLine("[AtspiRoot] ✅ Accessible method handler added to PathHandler for child context.");
-                Console.WriteLine($"[AtspiRoot] 🔍 Child PathHandler now contains {pathHandler.Count} handlers");
-                
-                // Add Component interface handler if the context supports it
-                if (context is IComponent component)
-                {
-                    var componentHandler = new AtspiComponentMethodHandler(component, _connection);
-                    pathHandler.Add(componentHandler);
-                    Console.WriteLine("[AtspiRoot] ✅ Component method handler added to PathHandler for child context.");
-                }
-                
-                Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler for child context to D-Bus connection.");
-                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler path: {pathHandler.Path}");
-                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler handler count: {pathHandler.Count}");
+                // Add minimal Introspectable handler
+                pathHandler.Add(new AtspiIntrospectionHandler(_connection, null));
+                Console.WriteLine($"[AtspiRoot] ✅ Added Accessible and Introspectable handlers for child: {context.ObjectPath}");
                 _connection.AddMethodHandler(pathHandler);
-                Console.WriteLine($"[AtspiRoot] 🔧 Child PathHandler added to connection - now monitoring for D-Bus calls...");
-                Console.WriteLine($"[AtspiRoot] ✅ Successfully registered child AT-SPI context with method handlers at: {context.ObjectPath}");
-                
-                // Debug: Verify PathHandler registration
-                Console.WriteLine("[AtspiRoot] 🔍 Verifying PathHandler registration for child context...");
-                Console.WriteLine($"[AtspiRoot] PathHandler registered for: {context.ObjectPath}");
-                Console.WriteLine($"[AtspiRoot] Introspection XML preview: {introspectionXml.Substring(0, Math.Min(100, introspectionXml.Length))}");
             }
             catch (Exception e)
             {
@@ -717,202 +683,6 @@ namespace Avalonia.FreeDesktop
             }
         }
 
-        /// <summary>
-        /// Generates basic AT-SPI introspection XML for child contexts
-        /// </summary>
-        private string GenerateChildIntrospectionXml(AtspiContext context)
-        {
-            var componentInterface = "";
-            
-            // Add Component interface if this context supports it
-            if (context is IComponent)
-            {
-                componentInterface = @"
-  <interface name='org.a11y.atspi.Component'>
-    <method name='Contains'>
-      <arg direction='in' type='i' name='x'/>
-      <arg direction='in' type='i' name='y'/>
-      <arg direction='in' type='u' name='coord_type'/>
-      <arg direction='out' type='b' name='result'/>
-    </method>
-    <method name='GetAccessibleAtPoint'>
-      <arg direction='in' type='i' name='x'/>
-      <arg direction='in' type='i' name='y'/>
-      <arg direction='in' type='u' name='coord_type'/>
-      <arg direction='out' type='(so)' name='accessible'/>
-    </method>
-    <method name='GetExtents'>
-      <arg direction='in' type='u' name='coord_type'/>
-      <arg direction='out' type='(iiii)' name='extents'/>
-    </method>
-    <method name='GetPosition'>
-      <arg direction='in' type='u' name='coord_type'/>
-      <arg direction='out' type='(ii)' name='position'/>
-    </method>
-    <method name='GetSize'>
-      <arg direction='out' type='(ii)' name='size'/>
-    </method>
-    <method name='GetLayer'>
-      <arg direction='out' type='u' name='layer'/>
-    </method>
-    <method name='GrabFocus'>
-      <arg direction='out' type='b' name='result'/>
-    </method>
-  </interface>";
-            }
-
-            return $@"<node name='{context.ObjectPath}'>
-  <interface name='org.a11y.atspi.Accessible'>
-    <method name='GetRole'>
-      <arg direction='out' type='u' name='role'/>
-    </method>
-    <method name='GetRoleName'>
-      <arg direction='out' type='s' name='name'/>
-    </method>
-    <method name='GetLocalizedRoleName'>
-      <arg direction='out' type='s' name='name'/>
-    </method>
-    <method name='GetChildCount'>
-      <arg direction='out' type='i' name='count'/>
-    </method>
-    <method name='GetChildAtIndex'>
-      <arg direction='in' type='i' name='index'/>
-      <arg direction='out' type='(so)' name='child'/>
-    </method>
-    <method name='GetChildren'>
-      <arg direction='out' type='a(so)' name='children'/>
-    </method>
-    <method name='GetIndexInParent'>
-      <arg direction='out' type='i' name='index'/>
-    </method>
-    <method name='GetRelationSet'>
-      <arg direction='out' type='a(ua(so))' name='relations'/>
-    </method>
-    <method name='GetState'>
-      <arg direction='out' type='au' name='states'/>
-    </method>
-    <method name='GetApplication'>
-      <arg direction='out' type='(so)' name='application'/>
-    </method>
-    <method name='GetAttributes'>
-      <arg direction='out' type='a{{ss}}' name='attributes'/>
-    </method>
-    <method name='GetInterfaces'>
-      <arg direction='out' type='as' name='interfaces'/>
-    </method>
-    <property name='Name' type='s' access='read'/>
-    <property name='Description' type='s' access='read'/>
-    <property name='Parent' type='(so)' access='read'/>
-    <property name='ChildCount' type='i' access='read'/>
-  </interface>{componentInterface}
-  <interface name='org.freedesktop.DBus.Introspectable'>
-    <method name='Introspect'>
-      <arg direction='out' type='s' name='xml'/>
-    </method>
-  </interface>
-  <interface name='org.freedesktop.DBus.Properties'>
-    <method name='Get'>
-      <arg direction='in' type='s' name='interface_name'/>
-      <arg direction='in' type='s' name='property_name'/>
-      <arg direction='out' type='v' name='value'/>
-    </method>
-    <method name='GetAll'>
-      <arg direction='in' type='s' name='interface_name'/>
-      <arg direction='out' type='a{{sv}}' name='properties'/>
-    </method>
-  </interface>
-</node>";
-        }
-
-        private string GenerateRootIntrospectionXml()
-        {
-            Console.WriteLine($"[AtspiRoot] 🔧 Generating root introspection XML for {RootPath}");
-
-            // Ensure no unexpected attributes like xmlns:xsi are included
-            var xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
-<node>
-  <interface name=""org.a11y.atspi.Accessible"">
-    <method name=""GetChildAtIndex"">
-      <arg type=""i"" direction=""in"" />
-      <arg type=""(so)"" direction=""out"" />
-    </method>
-    <method name=""GetChildren"">
-      <arg type=""a(so)"" direction=""out"" />
-    </method>
-    <method name=""GetIndexInParent"">
-      <arg type=""i"" direction=""out"" />
-    </method>
-    <method name=""GetRelationSet"">
-      <arg type=""a(ua(so))"" direction=""out"" />
-    </method>
-    <method name=""GetRole"">
-      <arg type=""u"" direction=""out"" />
-    </method>
-    <method name=""GetRoleName"">
-      <arg type=""s"" direction=""out"" />
-    </method>
-    <method name=""GetLocalizedRoleName"">
-      <arg type=""s"" direction=""out"" />
-    </method>
-    <method name=""GetState"">
-      <arg type=""au"" direction=""out"" />
-    </method>
-    <method name=""GetAttributes"">
-      <arg type=""a{ss}"" direction=""out"" />
-    </method>
-    <method name=""GetApplication"">
-      <arg type=""(so)"" direction=""out"" />
-    </method>
-    <method name=""GetInterfaces"">
-      <arg type=""as"" direction=""out"" />
-    </method>
-    <property name=""Name"" type=""s"" access=""read"" />
-    <property name=""Description"" type=""s"" access=""read"" />
-    <property name=""Parent"" type=""(so)"" access=""read"" />
-    <property name=""ChildCount"" type=""i"" access=""read"" />
-  </interface>
-  <interface name=""org.a11y.atspi.Application"">
-    <property name=""ToolkitName"" type=""s"" access=""read"" />
-    <property name=""Version"" type=""s"" access=""read"" />
-    <property name=""Id"" type=""i"" access=""read"" />
-    <method name=""GetApplicationBusAddress"">
-      <arg type=""s"" direction=""out"" />
-    </method>
-    <method name=""GetLocale"">
-      <arg type=""u"" direction=""in"" />
-      <arg type=""s"" direction=""out"" />
-    </method>
-    <method name=""RegisterEventListener"">
-      <arg type=""s"" direction=""in"" />
-    </method>
-    <method name=""DeregisterEventListener"">
-      <arg type=""s"" direction=""in"" />
-    </method>
-    <method name=""GetApplicationInterfaces"">
-      <arg type=""as"" direction=""out"" />
-    </method>
-  </interface>
-  <interface name=""org.freedesktop.DBus.Introspectable"">
-    <method name=""Introspect"">
-      <arg type=""s"" direction=""out"" />
-    </method>
-  </interface>
-  <interface name=""org.freedesktop.DBus.Properties"">
-    <method name=""Get"">
-      <arg direction=""in"" type=""s"" name=""interface_name""/>
-      <arg direction=""in"" type=""s"" name=""property_name""/>
-      <arg direction=""out"" type=""v"" name=""value""/>
-    </method>
-    <method name=""GetAll"">
-      <arg direction=""in"" type=""s"" name=""interface_name""/>
-      <arg direction=""out"" type=""a{sv}"" name=""properties""/>
-    </method>
-  </interface>
-</node>";
-
-    Console.WriteLine($"[AtspiRoot] ✅ Generated root introspection XML ({xml.Length} chars)");
-    return xml;
-}
 
         private void EnsureInitializationComplete()
         {
