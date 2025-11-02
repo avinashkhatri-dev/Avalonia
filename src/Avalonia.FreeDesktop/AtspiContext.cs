@@ -6,6 +6,7 @@ using Avalonia.Automation.Provider;
 using Avalonia.Controls;
 using Avalonia.FreeDesktop.Atspi;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using Tmds.DBus.Protocol;
 using Tmds.DBus.SourceGenerator;
 
@@ -22,9 +23,126 @@ namespace Avalonia.FreeDesktop
     public class AtspiContext : IAccessible, IComponent
     {
         private static uint _id;
-        private readonly AtspiRoot _root;
-        private readonly AutomationPeer _peer;
+        internal readonly AtspiRoot _root;
+        internal readonly AutomationPeer _peer;
         private readonly AtspiRole _role;
+        
+        // Properties exposed via org.freedesktop.DBus.Properties interface
+        public string Name 
+        {
+            get
+            {
+                try
+                {
+                    Console.WriteLine($"[AtspiContext.Name] Getting name for {ObjectPath}");
+                    Console.WriteLine($"[AtspiContext.Name] _peer type: {_peer.GetType().Name}");
+                    Console.WriteLine($"[AtspiContext.Name] _peer full type: {_peer.GetType().FullName}");
+                    
+                    // D-Bus calls come from background thread, but Avalonia properties require UI thread
+                    var name = Dispatcher.UIThread.Invoke(() => {
+                        Console.WriteLine($"[AtspiContext.Name] On UI thread, calling _peer.GetName()");
+                        var result = _peer.GetName();
+                        Console.WriteLine($"[AtspiContext.Name] _peer.GetName() returned: '{result ?? "NULL"}'");
+                        return result;
+                    }) ?? "";
+                    
+                    Console.WriteLine($"[AtspiContext] Property 'Name' accessed for {ObjectPath}: '{name}'");
+                    return name;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiContext] ERROR getting Name for {ObjectPath}: {e}");
+                    return "";
+                }
+            }
+        }
+        
+        public string Description 
+        {
+            get
+            {
+                try
+                {
+                    var desc = Dispatcher.UIThread.Invoke(() => _peer.GetHelpText()) ?? "";
+                    Console.WriteLine($"[AtspiContext] Property 'Description' accessed for {ObjectPath}: '{desc}'");
+                    return desc;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiContext] ERROR getting Description for {ObjectPath}: {e}");
+                    return "";
+                }
+            }
+        }
+        
+        public ObjectReference Parent
+        {
+            get
+            {
+                try
+                {
+                    Console.WriteLine($"[AtspiContext] Property 'Parent' accessed for {ObjectPath}");
+                    var parentPeer = Dispatcher.UIThread.Invoke(() => _peer.GetParent());
+                    if (parentPeer != null)
+                    {
+                        var parentContext = _root.GetOrCreateAutomationContext(parentPeer);
+                        if (parentContext != null)
+                        {
+                            Console.WriteLine($"[AtspiContext] Parent found: {_root.LocalName}:{parentContext.ObjectPath}");
+                            return new ObjectReference(_root.LocalName, parentContext.ObjectPath);
+                        }
+                    }
+                    
+                    // Default to root application object
+                    Console.WriteLine($"[AtspiContext] Parent defaulting to root: {_root.LocalName}:{_root.ObjectPath}");
+                    return _root.ApplicationPath;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiContext] ERROR getting Parent for {ObjectPath}: {e}");
+                    Console.WriteLine($"[AtspiContext] Stack trace: {e.StackTrace}");
+                    // Return root as fallback
+                    return _root.ApplicationPath;
+                }
+            }
+        }
+        
+        public int ChildCount 
+        {
+            get
+            {
+                try
+                {
+                    var count = Dispatcher.UIThread.Invoke(() => _peer.GetChildren()?.Count ?? 0);
+                    Console.WriteLine($"[AtspiContext] Property 'ChildCount' accessed for {ObjectPath}: {count}");
+                    return count;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiContext] ERROR getting ChildCount for {ObjectPath}: {e}");
+                    return 0;
+                }
+            }
+        }
+        
+        public string Locale 
+        {
+            get
+            {
+                try
+                {
+                    var locale = System.Globalization.CultureInfo.CurrentCulture.Name;
+                    Console.WriteLine($"[AtspiContext] Property 'Locale' accessed for {ObjectPath}: '{locale}'");
+                    return locale;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiContext] ERROR getting Locale for {ObjectPath}: {e}");
+                    return "en-US";
+                }
+            }
+        }
+        
         public AtspiContext(AtspiRoot root, AutomationPeer peer, AtspiRole role)
         {
             _root = root;
@@ -155,106 +273,6 @@ namespace Avalonia.FreeDesktop
         Task<uint[]> IAccessible.GetStateAsync() => Task.FromResult(GetAccessibleStates());
         Task<IDictionary<string, string>> IAccessible.GetAttributesAsync() => Task.FromResult(_root.Attributes);
         Task<ObjectReference> IAccessible.GetApplicationAsync() => Task.FromResult(_root.ApplicationPath);
-
-        Task<object?> IAccessible.GetAsync(string prop)
-        {
-            try
-            {
-                return Task.FromResult<object?>(prop switch
-                {
-                    "Name" => _peer.GetName() ?? "",
-                    "Description" => _peer.GetHelpText() ?? "",
-                    "Value" => GetControlValue(),
-                    _ => null,
-                });
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"Error getting property {prop}: {e.Message}");
-                return Task.FromResult<object?>(null);
-            }
-        }
-
-        Task<AccessibleProperties> IAccessible.GetAllAsync()
-        {
-            try
-            {
-                // Get the proper parent reference
-                ObjectReference parentRef;
-                var parent = _peer.GetParent();
-                if (parent != null)
-                {
-                    var parentContext = _root.GetOrCreateAutomationContext(parent);
-                    if (parentContext != null)
-                    {
-                        parentRef = new ObjectReference(_root.LocalName, parentContext.ObjectPath);
-                    }
-                    else
-                    {
-                        // Parent exists but no context - point to root
-                        parentRef = new ObjectReference(_root.LocalName, new ObjectPath("/org/a11y/atspi/accessible/root"));
-                    }
-                }
-                else
-                {
-                    // No parent - this is the root
-                    parentRef = new ObjectReference(_root.LocalName, new ObjectPath("/org/a11y/atspi/accessible/root"));
-                }
-
-                return Task.FromResult(new AccessibleProperties
-                {
-                    Name = _peer.GetName() ?? "",
-                    Description = _peer.GetHelpText() ?? "",
-                    Parent = parentRef,
-                    ChildCount = _peer.GetChildren().Count,
-                    Locale = "en_US.UTF-8",
-                    AccessibleId = _peer.GetAutomationId() ?? ""
-                });
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"Error getting all properties: {e.Message}");
-                return Task.FromResult(new AccessibleProperties
-                {
-                    Name = "Error",
-                    Description = "",
-                    Parent = new ObjectReference("", new ObjectPath("/org/a11y/atspi/null")),
-                    ChildCount = 0,
-                    Locale = "en_US.UTF-8",
-                    AccessibleId = ""
-                });
-            }
-        }
-
-        private string? GetControlValue()
-        {
-            // Try to get the value from different control types
-            try
-            {
-                if (_peer is IValueProvider valueProvider)
-                {
-                    return valueProvider.Value;
-                }
-                
-                // For text controls, get the text content
-                var automationId = _peer.GetAutomationId();
-                if (!string.IsNullOrEmpty(automationId) && automationId.Contains("Text"))
-                {
-                    return _peer.GetName(); // For text controls, name often contains the text
-                }
-            }
-            catch
-            {
-                // Ignore errors when getting values
-            }
-            
-            return null;
-        }
-
-        Task IAccessible.SetAsync(string prop, object val)
-        {
-            return Task.CompletedTask;
-        }
 
         // IComponent implementation - Required for accerciser hover/highlighting
         Task<bool> IComponent.ContainsAsync(int x, int y, uint coord_type)

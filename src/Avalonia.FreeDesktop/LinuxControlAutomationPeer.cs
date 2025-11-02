@@ -33,11 +33,28 @@ namespace Avalonia.FreeDesktop
             InitializeAtSpiSupport();
         }
 
-        // Delegate important methods to the wrapped peer if available
-        public new string? GetName() => _wrappedPeer?.GetName() ?? base.GetName();
-        public new AutomationControlType GetAutomationControlType() => _wrappedPeer?.GetAutomationControlType() ?? base.GetAutomationControlType();
-        public new string? GetClassName() => _wrappedPeer?.GetClassName() ?? base.GetClassName();
-        public new string? GetAutomationId() => _wrappedPeer?.GetAutomationId() ?? base.GetAutomationId();
+        // Override GetNameCore to delegate to wrapped peer
+        protected override string? GetNameCore()
+        {
+            Console.WriteLine($"[LinuxControlAutomationPeer.GetNameCore] Called for {Owner?.GetType().Name ?? "NULL"}");
+            Console.WriteLine($"[LinuxControlAutomationPeer.GetNameCore] _wrappedPeer: {_wrappedPeer?.GetType().Name ?? "NULL"}");
+            
+            if (_wrappedPeer != null)
+            {
+                // Call GetName() which will invoke the wrapped peer's GetNameCore()
+                var result = _wrappedPeer.GetName();
+                Console.WriteLine($"[LinuxControlAutomationPeer.GetNameCore] Wrapped peer returned: '{result ?? "NULL"}'");
+                return result;
+            }
+            
+            var baseResult = base.GetNameCore();
+            Console.WriteLine($"[LinuxControlAutomationPeer.GetNameCore] Base returned: '{baseResult ?? "NULL"}'");
+            return baseResult;
+        }
+        
+        protected override AutomationControlType GetAutomationControlTypeCore() => _wrappedPeer?.GetAutomationControlType() ?? base.GetAutomationControlType();
+        protected override string GetClassNameCore() => _wrappedPeer?.GetClassName() ?? base.GetClassNameCore();
+        protected override string? GetAutomationIdCore() => _wrappedPeer?.GetAutomationId() ?? base.GetAutomationIdCore();
 
         /// <summary>
         /// Gets the wrapped automation peer, if any.

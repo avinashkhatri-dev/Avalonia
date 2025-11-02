@@ -198,9 +198,6 @@ namespace Avalonia.FreeDesktop.Atspi
         Task<uint[]> GetStateAsync();
         Task<IDictionary<string, string>> GetAttributesAsync();
         Task<ObjectReference> GetApplicationAsync();
-        Task<object?> GetAsync(string prop);
-        Task<AccessibleProperties> GetAllAsync();
-        Task SetAsync(string prop, object val);
     }
 
     internal interface IApplication
@@ -209,9 +206,6 @@ namespace Avalonia.FreeDesktop.Atspi
         Task<string> GetLocaleAsync(uint lcType);
         Task RegisterEventListenerAsync(string Event);
         Task DeregisterEventListenerAsync(string Event);
-        Task<object?> GetAsync(string prop);
-        Task<ApplicationProperties> GetAllAsync();
-        Task SetAsync(string prop, object val);
     }
 
     internal interface ICache

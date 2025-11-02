@@ -41,7 +41,7 @@ namespace Avalonia.FreeDesktop
         private readonly Dictionary<AutomationPeer, AtspiContext> _contexts = new();
         private readonly HashSet<string> _registeredPaths = new(); // Track D-Bus registered paths
         private AtspiCache? _cache;
-        private AccessibleProperties? _accessibleProperties;
+        internal AccessibleProperties? _accessibleProperties;
         private ApplicationProperties? _applicationProperties;
         private string? _busName;
 
@@ -75,6 +75,154 @@ namespace Avalonia.FreeDesktop
         public ObjectReference ApplicationPath => new ObjectReference(_busName ?? ":1.0", ObjectPath);
         public IDictionary<string, string> Attributes { get; }
         public string LocalName => _busName ?? ":1.0";
+
+        // Properties exposed via org.freedesktop.DBus.Properties interface
+        public string Name 
+        {
+            get
+            {
+                try
+                {
+                    var name = _accessibleProperties?.Name ?? Application.Current?.Name ?? "Unnamed";
+                    Console.WriteLine($"[AtspiRoot] Property 'Name' accessed: '{name}'");
+                    return name;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Name: {e}");
+                    return "Unnamed";
+                }
+            }
+        }
+        
+        public string Description 
+        {
+            get
+            {
+                try
+                {
+                    var desc = _accessibleProperties?.Description ?? "";
+                    Console.WriteLine($"[AtspiRoot] Property 'Description' accessed: '{desc}'");
+                    return desc;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Description: {e}");
+                    return "";
+                }
+            }
+        }
+        
+        public ObjectReference Parent 
+        {
+            get
+            {
+                try
+                {
+                    Console.WriteLine($"[AtspiRoot] Property 'Parent' accessed");
+                    var parent = new ObjectReference("org.a11y.atspi.Registry", new ObjectPath("/org/a11y/atspi/accessible/root"));
+                    Console.WriteLine($"[AtspiRoot] Parent value: {parent.Service}:{parent.Path}");
+                    return parent;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Parent: {e}");
+                    Console.WriteLine($"[AtspiRoot] Stack trace: {e.StackTrace}");
+                    return new ObjectReference("org.a11y.atspi.Registry", new ObjectPath("/org/a11y/atspi/accessible/root"));
+                }
+            }
+        }
+        
+        public int ChildCount 
+        {
+            get
+            {
+                try
+                {
+                    var count = _children?.Count ?? 0;
+                    Console.WriteLine($"[AtspiRoot] Property 'ChildCount' accessed: {count}");
+                    return count;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting ChildCount: {e}");
+                    return 0;
+                }
+            }
+        }
+        
+        public string Locale 
+        {
+            get
+            {
+                try
+                {
+                    var locale = _accessibleProperties?.Locale ?? CultureInfo.CurrentCulture.Name;
+                    Console.WriteLine($"[AtspiRoot] Property 'Locale' accessed: '{locale}'");
+                    return locale;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Locale: {e}");
+                    return "en-US";
+                }
+            }
+        }
+        
+        // Application properties exposed via org.freedesktop.DBus.Properties interface
+        public string ToolkitName 
+        {
+            get
+            {
+                try
+                {
+                    var name = _applicationProperties?.ToolkitName ?? "Avalonia";
+                    Console.WriteLine($"[AtspiRoot] Property 'ToolkitName' accessed: '{name}'");
+                    return name;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting ToolkitName: {e}");
+                    return "Avalonia";
+                }
+            }
+        }
+        
+        public string Version 
+        {
+            get
+            {
+                try
+                {
+                    var version = _applicationProperties?.Version ?? FileVersionInfo.GetVersionInfo(Assembly.GetEntryAssembly()?.Location ?? Assembly.GetExecutingAssembly().Location).FileVersion ?? "0.0.0.0";
+                    Console.WriteLine($"[AtspiRoot] Property 'Version' accessed: '{version}'");
+                    return version;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Version: {e}");
+                    return "0.0.0.0";
+                }
+            }
+        }
+        
+        public int Id 
+        {
+            get
+            {
+                try
+                {
+                    var id = _applicationProperties?.Id ?? 0;
+                    Console.WriteLine($"[AtspiRoot] Property 'Id' accessed: {id}");
+                    return id;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[AtspiRoot] ERROR getting Id: {e}");
+                    return 0;
+                }
+            }
+        }
 
         /// <summary>
         /// Gets the D-Bus connection for registering method handlers.
@@ -668,12 +816,19 @@ namespace Avalonia.FreeDesktop
                 }
                 // Create PathHandler for this specific child context
                 var pathHandler = new PathHandler(context.ObjectPath.ToString());
+                
+                // Add Introspectable handler
+                pathHandler.Add(new AtspiIntrospectionHandler(_connection, null));
+                
                 // Add Accessible method handler
                 var accessibleHandler = new AtspiAccessibleMethodHandler(context, _connection);
                 pathHandler.Add(accessibleHandler);
-                // Add minimal Introspectable handler
-                pathHandler.Add(new AtspiIntrospectionHandler(_connection, null));
-                Console.WriteLine($"[AtspiRoot] ✅ Added Accessible and Introspectable handlers for child: {context.ObjectPath}");
+                
+                // Register Properties handler directly with connection for this path
+                // (cannot use PathHandler.Add as it requires IDBusInterfaceHandler)
+                _connection.AddMethodHandler(new AtspiPropertiesMethodHandler(context, _connection));
+                
+                Console.WriteLine($"[AtspiRoot] ✅ Added Accessible, Properties, and Introspectable handlers for child: {context.ObjectPath}");
                 _connection.AddMethodHandler(pathHandler);
             }
             catch (Exception e)
@@ -806,67 +961,6 @@ namespace Avalonia.FreeDesktop
             throw new NotImplementedException();
         }
 
-        Task<object?> IApplication.GetAsync(string prop)
-        {
-            return Task.FromResult<object?>(prop switch
-            {
-                nameof(ApplicationProperties.ToolkitName) => _applicationProperties!.ToolkitName,
-                nameof(ApplicationProperties.Version) => _applicationProperties!.Version,
-                nameof(ApplicationProperties.AtspiVersion) => _applicationProperties!.AtspiVersion,
-                nameof(ApplicationProperties.Id) => _applicationProperties!.Id,
-                _ => null,
-            });
-        }
-
-        Task<ApplicationProperties> IApplication.GetAllAsync() => Task.FromResult(_applicationProperties!);
-
-        Task IApplication.SetAsync(string prop, object val)
-        {
-            switch (prop)
-            {
-                case nameof(ApplicationProperties.Id):
-                    _applicationProperties!.Id = (int)val;
-                    break;
-            }
-
-            return Task.CompletedTask;
-        }
-
-        Task<object?> IAccessible.GetAsync(string prop)
-        {
-            Console.WriteLine($"[AtspiRoot] GetAsync called for property: {prop}");
-            return Task.FromResult<object?>(prop switch
-            {
-                nameof(AccessibleProperties.Name) => _accessibleProperties!.Name,
-                nameof(AccessibleProperties.Description) => _accessibleProperties!.Description,
-                nameof(AccessibleProperties.Parent) => _accessibleProperties!.Parent,
-                nameof(AccessibleProperties.ChildCount) => _children.Count, // Use actual current count
-                nameof(AccessibleProperties.Locale) => _accessibleProperties!.Locale,
-                nameof(AccessibleProperties.AccessibleId) => _accessibleProperties!.AccessibleId,
-                _ => null,
-            });
-        }
-
-        Task<AccessibleProperties> IAccessible.GetAllAsync() 
-        {
-            // Return a properties object with current child count
-            var props = new AccessibleProperties
-            {
-                Name = _accessibleProperties!.Name,
-                Description = _accessibleProperties!.Description,
-                Parent = _accessibleProperties!.Parent,
-                ChildCount = _children.Count, // Use actual current count
-                Locale = _accessibleProperties!.Locale,
-                AccessibleId = _accessibleProperties!.AccessibleId
-            };
-            return Task.FromResult(props);
-        }
-
-        Task IAccessible.SetAsync(string prop, object val)
-        {
-            throw new NotImplementedException();
-        }
-
         private void AddChild(Child child)
         {
             lock (_children)
@@ -891,16 +985,6 @@ namespace Avalonia.FreeDesktop
 
                 _isInitialized = true;
                 Console.WriteLine("[CompleteInitialization] Initialization complete.");
-            }
-        }
-
-        // Example usage in ChildCount getter
-        private int ChildCount
-        {
-            get
-            {
-                EnsureInitializationComplete();
-                return _children.Count;
             }
         }
 
