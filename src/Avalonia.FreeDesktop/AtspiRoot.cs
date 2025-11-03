@@ -756,9 +756,9 @@ namespace Avalonia.FreeDesktop
                 // Create the D-Bus method handler for the root object
                 var pathHandler = new PathHandler(RootPath);
 
-                // Add Introspectable handler FIRST to ensure it takes precedence
+                // Add Introspectable handler
                 pathHandler.Add(new AtspiIntrospectionHandler(_connection, null));
-                Console.WriteLine("[AtspiRoot] ✅ Introspectable handler added to PathHandler (registered first).");
+                Console.WriteLine("[AtspiRoot] ✅ Introspectable handler added to PathHandler.");
 
                 // Add Accessible method handler
                 var accessibleHandler = new AtspiAccessibleMethodHandler(this, _connection);
@@ -773,11 +773,24 @@ namespace Avalonia.FreeDesktop
                     Console.WriteLine("[AtspiRoot] ✅ Application method handler added to PathHandler.");
                 }
 
-                Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler to D-Bus connection.");
-                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler path: {pathHandler.Path}");
-                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler handler count: {pathHandler.Count}");
-                _connection.AddMethodHandler(pathHandler);
-                Console.WriteLine($"[AtspiRoot] 🔧 PathHandler added to connection - now monitoring for D-Bus calls...");
+                // Register Properties handler directly with connection BEFORE PathHandler
+                // (cannot use PathHandler.Add as it requires IDBusInterfaceHandler)
+                _connection.AddMethodHandler(new AtspiRootPropertiesMethodHandler(this, _connection));
+                Console.WriteLine("[AtspiRoot] ✅ Properties handler registered directly with connection.");
+
+                try
+                {
+                    Console.WriteLine($"[AtspiRoot] 🔧 Adding PathHandler to D-Bus connection.");
+                    Console.WriteLine($"[AtspiRoot] 🔧 PathHandler path: {pathHandler.Path}");
+                    Console.WriteLine($"[AtspiRoot] 🔧 PathHandler handler count: {pathHandler.Count}");
+                    _connection.AddMethodHandler(pathHandler);
+                    Console.WriteLine($"[AtspiRoot] 🔧 PathHandler added to connection - now monitoring for D-Bus calls...");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AtspiRoot] ⚠️ PathHandler already registered (expected if Properties handler registered first): {ex.Message}");
+                }
+                
                 _registeredPaths.Add(RootPath); // Track registration
                 Console.WriteLine($"[AtspiRoot] ✅ Successfully registered AT-SPI root object with method handlers at: {RootPath}");
                 
