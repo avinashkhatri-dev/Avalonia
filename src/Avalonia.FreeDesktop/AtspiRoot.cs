@@ -35,7 +35,7 @@ namespace Avalonia.FreeDesktop
         // TODO: Not sure where to store this shared instance.
         private static AtspiRoot? _instance;
         private static bool _instanceInitialized;
-        private static Connection? _connection;
+        private static Connection? _connection; // AT-SPI bus connection
 
         private List<Child> _children = new List<Child>();
         private readonly Dictionary<AutomationPeer, AtspiContext> _contexts = new();
@@ -271,10 +271,18 @@ namespace Avalonia.FreeDesktop
 
                             Console.WriteLine("[AtspiRoot] ✅ Successfully connected to AT-SPI bus.");
 
+                            // Note: Well-known D-Bus names are optional
+                            // The Registry uses unique bus names (e.g., :1.123) for registration
+                            // Commenting out well-known name registration as it's not required
+
                             // Set up the bus name and register D-Bus handlers
                             _instance._busName = _connection.UniqueName;
                             _instance.Register();
                             Console.WriteLine("[AtspiRoot] ✅ Root object registered on AT-SPI bus.");
+                            
+                            // Embed application in AT-SPI desktop for pyatspi discovery
+                            await _instance.RegisterWithAtspiAsync();
+                            
                             Console.WriteLine("[AtspiRoot] ✅ AT-SPI initialization completed successfully.");
                         }
                         catch (Exception ex)
@@ -624,29 +632,15 @@ namespace Avalonia.FreeDesktop
                 Console.WriteLine($"[AtspiRoot] AT-SPI application reference created: {_busName}:{RootPath}");
                 Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI application reference created: {BusName}:{Path}", _busName, RootPath);
                 
-                // Register with AT-SPI registry service
-                Console.WriteLine($"[AtspiRoot] Attempting AT-SPI registry registration...");
+                // CRITICAL: Applications MUST call Socket.Embed to register with Registry
+                // This adds the app to Registry's children list, making it discoverable by pyatspi
+                await RegisterWithAtspiRegistry(appRef);
                 
-                try 
-                {
-                    // Actually register with the AT-SPI registry for accerciser to discover the app
-                    await RegisterWithAtspiRegistry(appRef);
-                    
-                    Console.WriteLine($"[AtspiRoot] ✅ AT-SPI application ready and discoverable");
-                    Console.WriteLine($"[AtspiRoot] 🔍 PathHandler registration provides discoverability");
-                    Console.WriteLine($"[AtspiRoot] 🌐 AT-SPI root path: {RootPath}");
-                    Console.WriteLine($"[AtspiRoot] 📊 Service name: {_busName}");
-                    
-                    Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI application ready and discoverable");
-                }
-                catch (Exception regEx)
-                {
-                    Console.WriteLine($"[AtspiRoot] ⚠️ Registry registration failed: {regEx.Message}");
-                    Console.WriteLine($"[AtspiRoot] 📍 Application still accessible via D-Bus path {_busName}:{RootPath}");
-                    Console.WriteLine($"[AtspiRoot] 💡 Note: Some AT-SPI tools may still discover the application");
-                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "AT-SPI registry registration failed: {Error}", regEx.Message);
-                }
+                Console.WriteLine($"[AtspiRoot] ✅ AT-SPI application registered and ready");
+                Console.WriteLine($"[AtspiRoot] 🌐 AT-SPI root path: {RootPath}");
+                Console.WriteLine($"[AtspiRoot] 📊 Service name: {_busName}");
                 
+                Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI application ready and discoverable");
                 Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI application registered and ready");
             }
             catch (Exception e)
@@ -658,41 +652,62 @@ namespace Avalonia.FreeDesktop
 
         /// <summary>
         /// Registers the application with the AT-SPI registry for discoverability by accessibility tools.
+        /// Modern AT-SPI uses Socket/Plug pattern where apps "embed" into the Registry desktop object.
         /// </summary>
         private async Task RegisterWithAtspiRegistry(ObjectReference appRef)
         {
             try
             {
-                Console.WriteLine($"[AtspiRoot] 🔗 Registering with AT-SPI registry service...");
+                Console.WriteLine($"[AtspiRoot] 🔗 Embedding into AT-SPI Registry desktop...");
                 Console.WriteLine($"[AtspiRoot] App reference: {appRef.Service}:{appRef.Path}");
                 
-                // Create proxy to the AT-SPI Registry service
-                var registry = new OrgA11yAtspiRegistryProxy(_connection!, "org.a11y.atspi.Registry", "/org/a11y/atspi/registry");
+                // Call Socket.Embed on the Registry
+                // Workaround for Tmds.DBus.Protocol ref struct limitation: create message in non-async helper
+                var message = CreateEmbedMessage(appRef);
+                var socketRef = await _connection!.CallMethodAsync<ObjectReference>(message, 
+                    (Message m, object? state) =>
+                    {
+                        var r = m.GetBodyReader();
+                        return new ObjectReference(r.ReadString(), r.ReadObjectPath().ToString());
+                    });
                 
-                // Convert ObjectReference to tuple format expected by proxy
-                var appRefTuple = (appRef.Service, new ObjectPath(appRef.Path));
+                var socketBusName = socketRef.Service;
+                var socketPath = socketRef.Path;
                 
-                // Call RegisterApplication through the proxy
-                await registry.RegisterApplicationAsync(appRefTuple);
-                
-                Console.WriteLine($"[AtspiRoot] ✅ Successfully registered with AT-SPI registry!");
-                Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "Successfully registered with AT-SPI registry");
+                Console.WriteLine($"[AtspiRoot] ✅ Successfully embedded into AT-SPI desktop!");
+                Console.WriteLine($"[AtspiRoot] Socket reference: {socketBusName}:{socketPath}");
+                Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "Successfully embedded into AT-SPI desktop");
             }
             catch (Exception ex)
             {
-                if (ex.Message.Contains("UnknownMethod") && ex.Message.Contains("RegisterApplication"))
-                {
-                    Console.WriteLine($"[AtspiRoot] ℹ️ Registry does not support application registration (common on modern systems)");
-                    Console.WriteLine($"[AtspiRoot] ✅ Application is discoverable on accessibility bus at {_busName}:{RootPath}");
-                    Logger.TryGet(LogEventLevel.Information, LogArea.Control)?.Log(this, "AT-SPI registry does not require application registration - app is accessible on bus");
-                }
-                else
-                {
-                    Console.WriteLine($"[AtspiRoot] ⚠️ Registry registration exception: {ex.Message}");
-                    Console.WriteLine($"[AtspiRoot] 📍 Application still accessible via D-Bus path {_busName}:{RootPath}");
-                    Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "AT-SPI registry registration failed: {Error}", ex.Message);
-                }
+                Console.WriteLine($"[AtspiRoot] ⚠️ Registry embedding failed: {ex.Message}");
+                Console.WriteLine($"[AtspiRoot] Stack: {ex.StackTrace}");
+                Logger.TryGet(LogEventLevel.Warning, LogArea.Control)?.Log(this, "AT-SPI registry embedding failed: {Error}", ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Creates a D-Bus message for calling Socket.Embed on the Registry.
+        /// Non-async to work around Tmds.DBus.Protocol's MessageWriter ref struct limitation.
+        /// Socket interface is exposed on the Registry's root accessible object.
+        /// </summary>
+        private MessageBuffer CreateEmbedMessage(ObjectReference appRef)
+        {
+            using var writer = _connection!.GetMessageWriter();
+            
+            writer.WriteMethodCallHeader(
+                destination: "org.a11y.atspi.Registry",
+                path: "/org/a11y/atspi/accessible/root",  // Socket is on root, not /registry
+                @interface: "org.a11y.atspi.Socket",
+                member: "Embed",
+                signature: "(so)");
+            
+            // Write the ObjectReference as a struct (so)
+            writer.WriteStructureStart();
+            writer.WriteString(appRef.Service);
+            writer.WriteObjectPath(new ObjectPath(appRef.Path));
+            
+            return writer.CreateMessage();
         }
         
         private void Register()
@@ -731,6 +746,9 @@ namespace Avalonia.FreeDesktop
             }
         }
 
+        /// <summary>
+        /// Registers the AtspiRoot on the SESSION bus for pyatspi discovery
+        /// </summary>
         /// <summary>
         /// Registers the AtspiRoot itself as a D-Bus object at /org/a11y/atspi/accessible/root
         /// </summary>
@@ -771,6 +789,14 @@ namespace Avalonia.FreeDesktop
                     var applicationHandler = new AtspiApplicationMethodHandler(this as IApplication, _connection);
                     pathHandler.Add(applicationHandler);
                     Console.WriteLine("[AtspiRoot] ✅ Application method handler added to PathHandler.");
+                }
+
+                // CRITICAL: Register the Cache interface at /org/a11y/atspi/cache
+                // This is how pyatspi and other AT tools discover the application!
+                if (_cache != null)
+                {
+                    _connection.AddMethodHandler(new AtspiCacheMethodHandler(_cache, _connection));
+                    Console.WriteLine($"[AtspiRoot] ✅ Cache handler registered at {_cache.ObjectPath} - enables app discovery!");
                 }
 
                 // Register Properties handler directly with connection BEFORE PathHandler
