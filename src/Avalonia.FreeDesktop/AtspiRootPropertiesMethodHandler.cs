@@ -40,27 +40,43 @@ namespace Avalonia.FreeDesktop
                 Console.WriteLine($"  Path: {context.Request.PathAsString}");
                 Console.WriteLine($"  Sender: {context.Request.SenderAsString}");
 
-                if (interfaceName != "org.freedesktop.DBus.Properties")
+                // Handle Properties interface
+                if (interfaceName == "org.freedesktop.DBus.Properties")
                 {
-                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Wrong interface: {interfaceName}");
-                    return default;
+                    switch (member)
+                    {
+                        case "Get":
+                            HandleGet(context);
+                            break;
+                        case "GetAll":
+                            HandleGetAll(context);
+                            break;
+                        case "Set":
+                            HandleSet(context);
+                            break;
+                        default:
+                            Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Unknown member: {member}");
+                            context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not supported");
+                            break;
+                    }
                 }
-
-                switch (member)
+                // Handle Accessible interface (specifically GetApplication)
+                else if (interfaceName == "org.a11y.atspi.Accessible")
                 {
-                    case "Get":
-                        HandleGet(context);
-                        break;
-                    case "GetAll":
-                        HandleGetAll(context);
-                        break;
-                    case "Set":
-                        HandleSet(context);
-                        break;
-                    default:
-                        Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Unknown member: {member}");
-                        context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not supported");
-                        break;
+                    if (member == "GetApplication")
+                    {
+                        HandleGetApplication(context);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Accessible method '{member}' not implemented");
+                        context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Unsupported interface: {interfaceName}");
+                    return default;
                 }
             }
             catch (Exception e)
@@ -80,6 +96,28 @@ namespace Avalonia.FreeDesktop
             return default;
         }
 
+        private void HandleGetApplication(MethodContext context)
+        {
+            try
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] HandleGetApplication called");
+                
+                // Return the application path (root points to itself as the application)
+                var writer = context.CreateReplyWriter("(so)");
+                writer.WriteStructureStart();
+                writer.WriteString(_root.ApplicationPath.Service);
+                writer.WriteObjectPath(_root.ApplicationPath.Path);
+                context.Reply(writer.CreateMessage());
+                
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetApplication returned: {_root.ApplicationPath.Service}, {_root.ApplicationPath.Path}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetApplication failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
         private void HandleGet(MethodContext context)
         {
             try
@@ -90,15 +128,25 @@ namespace Avalonia.FreeDesktop
 
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Get('{propertyInterface}', '{propertyName}')");
 
-                if (propertyInterface != "org.a11y.atspi.Accessible")
+                PropertyValue? variant = null;
+                
+                if (propertyInterface == "org.a11y.atspi.Accessible")
+                {
+                    variant = GetPropertyValue(propertyName);
+                }
+                else if (propertyInterface == "org.a11y.atspi.Application")
+                {
+                    variant = GetApplicationPropertyValue(propertyName);
+                }
+                else
                 {
                     context.ReplyError("org.freedesktop.DBus.Error.InvalidArgs", $"Interface '{propertyInterface}' not supported");
                     return;
                 }
 
-                var variant = GetPropertyValue(propertyName);
-                if (variant == null)
+                if (variant == null || !variant.HasValue)
                 {
+                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Property not found: {propertyName}");
                     context.ReplyError("org.freedesktop.DBus.Error.InvalidArgs", $"Property '{propertyName}' not found");
                     return;
                 }
@@ -127,12 +175,31 @@ namespace Avalonia.FreeDesktop
 
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] GetAll('{propertyInterface}')");
 
-                if (propertyInterface != "org.a11y.atspi.Accessible")
+                if (propertyInterface == "org.a11y.atspi.Accessible")
+                {
+                    HandleGetAllAccessible(context);
+                }
+                else if (propertyInterface == "org.a11y.atspi.Application")
+                {
+                    HandleGetAllApplication(context);
+                }
+                else
                 {
                     context.ReplyError("org.freedesktop.DBus.Error.InvalidArgs", $"Interface '{propertyInterface}' not supported");
                     return;
                 }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetAll failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
 
+        private void HandleGetAllAccessible(MethodContext context)
+        {
+            try
+            {
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Creating reply writer...");
                 var writer = context.CreateReplyWriter("a{sv}");
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Starting dictionary...");
@@ -190,6 +257,42 @@ namespace Avalonia.FreeDesktop
                 {
                     Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Failed to send error reply: {replyEx.Message}");
                 }
+            }
+        }
+
+        private void HandleGetAllApplication(MethodContext context)
+        {
+            var writer = context.CreateReplyWriter("a{sv}");
+            var arrayStart = writer.WriteDictionaryStart();
+
+            WriteProperty(ref writer, "ToolkitName", new PropertyValue { Type = 's', StringValue = "Avalonia" });
+            WriteProperty(ref writer, "Version", new PropertyValue { Type = 's', StringValue = "12.0.999" });
+            WriteProperty(ref writer, "AtspiVersion", new PropertyValue { Type = 's', StringValue = "2.1" });
+            WriteProperty(ref writer, "Id", new PropertyValue { Type = 'i', IntValue = 0 });
+
+            writer.WriteDictionaryEnd(arrayStart);
+            context.Reply(writer.CreateMessage());
+            
+            Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetAll returned 4 Application properties");
+        }
+
+        private PropertyValue? GetApplicationPropertyValue(string propertyName)
+        {
+            try
+            {
+                return propertyName switch
+                {
+                    "ToolkitName" => new PropertyValue { Type = 's', StringValue = "Avalonia" },
+                    "Version" => new PropertyValue { Type = 's', StringValue = "12.0.999" },
+                    "AtspiVersion" => new PropertyValue { Type = 's', StringValue = "2.1" },
+                    "Id" => new PropertyValue { Type = 'i', IntValue = 0 },
+                    _ => null
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetApplicationPropertyValue('{propertyName}') exception: {ex.Message}");
+                throw;
             }
         }
 
