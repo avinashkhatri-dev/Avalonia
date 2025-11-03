@@ -18,12 +18,31 @@ namespace Avalonia.FreeDesktop
         private readonly IAccessible _accessible;
         private readonly Connection _connection;
 
+        // Provide introspection XML so pyatspi can discover GetRole and other methods
+        private static readonly ReadOnlyMemory<byte> _introspectXml = System.Text.Encoding.UTF8.GetBytes(
+            "<interface name=\"org.a11y.atspi.Accessible\">\n" +
+            "  <method name=\"GetRole\"><arg direction=\"out\" type=\"u\"/></method>\n" +
+            "  <method name=\"GetRoleName\"><arg direction=\"out\" type=\"s\"/></method>\n" +
+            "  <method name=\"GetLocalizedRoleName\"><arg direction=\"out\" type=\"s\"/></method>\n" +
+            "  <method name=\"GetState\"><arg direction=\"out\" type=\"au\"/></method>\n" +
+            "  <method name=\"GetAttributes\"><arg direction=\"out\" type=\"a{ss}\"/></method>\n" +
+            "  <method name=\"GetApplication\"><arg direction=\"out\" type=\"(so)\"/></method>\n" +
+            "  <method name=\"GetChildAtIndex\"><arg direction=\"in\" name=\"index\" type=\"i\"/><arg direction=\"out\" type=\"(so)\"/></method>\n" +
+            "  <method name=\"GetChildren\"><arg direction=\"out\" type=\"a(so)\"/></method>\n" +
+            "  <method name=\"GetIndexInParent\"><arg direction=\"out\" type=\"i\"/></method>\n" +
+            "  <method name=\"GetRelationSet\"><arg direction=\"out\" type=\"a(ua(so))\"/></method>\n" +
+            "  <method name=\"GetInterfaces\"><arg direction=\"out\" type=\"as\"/></method>\n" +
+            "</interface>");
+
+        // Hide base IntrospectXml property - works because DBusConnection casts to MethodHandlerBase
+        public new ReadOnlyMemory<byte> IntrospectXml => _introspectXml;
+
         internal AtspiAccessibleMethodHandler(IAccessible accessible, Connection connection) : base()
         {
             _accessible = accessible ?? throw new ArgumentNullException(nameof(accessible));
             _connection = connection ?? throw new ArgumentNullException(nameof(connection));
             
-            Console.WriteLine($"[AtspiAccessibleMethodHandler] Created for accessible object");
+            Console.WriteLine($"[AtspiAccessibleMethodHandler] ✅ Created with IntrospectXml for GetRole discovery");
         }
 
         public override Connection Connection => _connection;

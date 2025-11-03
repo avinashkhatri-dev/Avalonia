@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Tmds.DBus.Protocol;
+using Avalonia.FreeDesktop.Atspi;
 
 #nullable enable
 
@@ -60,17 +61,42 @@ namespace Avalonia.FreeDesktop
                             break;
                     }
                 }
-                // Handle Accessible interface (specifically GetApplication)
+                // Handle Accessible interface methods
                 else if (interfaceName == "org.a11y.atspi.Accessible")
                 {
-                    if (member == "GetApplication")
+                    switch (member)
                     {
-                        HandleGetApplication(context);
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Accessible method '{member}' not implemented");
-                        context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
+                        case "GetApplication":
+                            HandleGetApplication(context);
+                            break;
+                        case "GetRole":
+                            HandleGetRole(context);
+                            break;
+                        case "GetRoleName":
+                            HandleGetRoleName(context);
+                            break;
+                        case "GetLocalizedRoleName":
+                            HandleGetLocalizedRoleName(context);
+                            break;
+                        case "GetState":
+                            HandleGetState(context);
+                            break;
+                        case "GetAttributes":
+                            HandleGetAttributes(context);
+                            break;
+                        case "GetChildren":
+                            HandleGetChildren(context);
+                            break;
+                        case "GetIndexInParent":
+                            HandleGetIndexInParent(context);
+                            break;
+                        case "GetInterfaces":
+                            HandleGetInterfaces(context);
+                            break;
+                        default:
+                            Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Accessible method '{member}' not implemented");
+                            context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
+                            break;
                     }
                 }
                 else
@@ -387,6 +413,172 @@ namespace Avalonia.FreeDesktop
             public string? StringValue;
             public int IntValue;
             public (string, ObjectPath) StructValue;
+        }
+
+        // Accessible interface method handlers
+        private void HandleGetRole(MethodContext context)
+        {
+            try
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] 🔥 GetRole() called");
+                var accessible = (IAccessible)_root;
+                var role = accessible.GetRoleAsync().GetAwaiter().GetResult();
+                
+                var writer = context.CreateReplyWriter("u");
+                writer.WriteUInt32(role);
+                context.Reply(writer.CreateMessage());
+                
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetRole() returned: {role}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetRole failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetRoleName(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var roleName = accessible.GetRoleNameAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("s");
+                writer.WriteString(roleName);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetRoleName() returned: {roleName}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetRoleName failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetLocalizedRoleName(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var localizedRoleName = accessible.GetLocalizedRoleNameAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("s");
+                writer.WriteString(localizedRoleName);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetLocalizedRoleName() returned: {localizedRoleName}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetLocalizedRoleName failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetState(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var state = accessible.GetStateAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("au");
+                writer.WriteArray(state);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetState() returned {state.Length} states");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetState failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetAttributes(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var attributes = accessible.GetAttributesAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("a{ss}");
+                var dictStart = writer.WriteDictionaryStart();
+                foreach (var kvp in attributes)
+                {
+                    writer.WriteDictionaryEntryStart();
+                    writer.WriteString(kvp.Key);
+                    writer.WriteString(kvp.Value);
+                }
+                writer.WriteDictionaryEnd(dictStart);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetAttributes() returned {attributes.Count} attributes");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetAttributes failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetChildren(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var children = accessible.GetChildrenAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("a(so)");
+                var arrayStart = writer.WriteArrayStart(DBusType.Struct);
+                foreach (var child in children)
+                {
+                    writer.WriteStructureStart();
+                    writer.WriteString(child.Service);
+                    writer.WriteObjectPath(child.Path);
+                }
+                writer.WriteArrayEnd(arrayStart);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetChildren() returned {children.Length} children");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetChildren failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetIndexInParent(MethodContext context)
+        {
+            try
+            {
+                var accessible = (IAccessible)_root;
+                var index = accessible.GetIndexInParentAsync().GetAwaiter().GetResult();
+                var writer = context.CreateReplyWriter("i");
+                writer.WriteInt32(index);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetIndexInParent() returned: {index}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetIndexInParent failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetInterfaces(MethodContext context)
+        {
+            try
+            {
+                // Return the standard AT-SPI interfaces supported by the root accessible
+                var interfaces = new string[]
+                {
+                    "org.a11y.atspi.Accessible",
+                    "org.a11y.atspi.Application"
+                };
+                var writer = context.CreateReplyWriter("as");
+                writer.WriteArray(interfaces);
+                context.Reply(writer.CreateMessage());
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetInterfaces() returned {interfaces.Length} interfaces");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetInterfaces failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
         }
     }
 }
