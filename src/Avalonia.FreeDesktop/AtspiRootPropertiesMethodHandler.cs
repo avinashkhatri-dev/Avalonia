@@ -93,10 +93,108 @@ namespace Avalonia.FreeDesktop
                         case "GetInterfaces":
                             HandleGetInterfaces(context);
                             break;
+                        case "GetChildAtIndex":
+                            HandleGetChildAtIndex(context);
+                            break;
                         default:
                             Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Accessible method '{member}' not implemented");
                             context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
                             break;
+                    }
+                }
+                // Handle Component interface methods
+                else if (interfaceName == "org.a11y.atspi.Component")
+                {
+                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Component interface call: {member}");
+                    // Stub: reply with default values for required properties/methods
+                    switch (member)
+                    {
+                        case "Alpha":
+                            {
+                                var writer = context.CreateReplyWriter("d");
+                                writer.WriteDouble(1.0);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "Layer":
+                            {
+                                var writer = context.CreateReplyWriter("u");
+                                writer.WriteUInt32(0);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "MDIZOrder":
+                            {
+                                var writer = context.CreateReplyWriter("i");
+                                writer.WriteInt32(0);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "Extents":
+                            {
+                                var writer = context.CreateReplyWriter("(iiiu)");
+                                writer.WriteInt32(0);
+                                writer.WriteInt32(0);
+                                writer.WriteInt32(100);
+                                writer.WriteUInt32(100);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "GetChildAtIndex":
+                            HandleGetChildAtIndex(context);
+                            break;
+                        case "Position":
+                            // ...existing code...
+                            {
+                                var writer = context.CreateReplyWriter("(ii)");
+                                writer.WriteInt32(0);
+                                writer.WriteInt32(0);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "Size":
+                            {
+                                var writer = context.CreateReplyWriter("(ii)");
+                                writer.WriteInt32(100);
+                                writer.WriteInt32(100);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "Contains":
+                            {
+                                var writer = context.CreateReplyWriter("b");
+                                writer.WriteBool(false);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        case "GetAccessibleAtPoint":
+                            {
+                                var writer = context.CreateReplyWriter("o");
+                                writer.WriteObjectPath(_root.ObjectPath);
+                                context.Reply(writer.CreateMessage());
+                            }
+                            break;
+                        default:
+                            Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Component method '{member}' not implemented");
+                            context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
+                            break;
+                    }
+                }
+                // Handle Introspectable interface
+                else if (interfaceName == "org.freedesktop.DBus.Introspectable")
+                {
+                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Introspectable interface call: {member}");
+                    if (member == "Introspect")
+                    {
+                        // Minimal XML stub for AT-SPI root
+                        var xml = "<node>\n  <interface name=\"org.a11y.atspi.Accessible\"/>\n  <interface name=\"org.a11y.atspi.Application\"/>\n  <interface name=\"org.a11y.atspi.Component\"/>\n  <interface name=\"org.freedesktop.DBus.Introspectable\"/>\n</node>";
+                        var writer = context.CreateReplyWriter("s");
+                        writer.WriteString(xml);
+                        context.Reply(writer.CreateMessage());
+                    }
+                    else
+                    {
+                        context.ReplyError("org.freedesktop.DBus.Error.UnknownMethod", $"Method '{member}' not implemented");
                     }
                 }
                 else
@@ -208,11 +306,6 @@ namespace Avalonia.FreeDesktop
                 else if (propertyInterface == "org.a11y.atspi.Application")
                 {
                     HandleGetAllApplication(context);
-                }
-                else
-                {
-                    context.ReplyError("org.freedesktop.DBus.Error.InvalidArgs", $"Interface '{propertyInterface}' not supported");
-                    return;
                 }
             }
             catch (Exception e)
@@ -423,11 +516,9 @@ namespace Avalonia.FreeDesktop
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] 🔥 GetRole() called");
                 var accessible = (IAccessible)_root;
                 var role = accessible.GetRoleAsync().GetAwaiter().GetResult();
-                
                 var writer = context.CreateReplyWriter("u");
                 writer.WriteUInt32(role);
                 context.Reply(writer.CreateMessage());
-                
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetRole() returned: {role}");
             }
             catch (Exception e)
@@ -577,6 +668,41 @@ namespace Avalonia.FreeDesktop
             catch (Exception e)
             {
                 Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetInterfaces failed: {e.Message}");
+                context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
+            }
+        }
+
+        private void HandleGetChildAtIndex(MethodContext context)
+        {
+            try
+            {
+                var reader = context.Request.GetBodyReader();
+                int index = reader.ReadInt32();
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] GetChildAtIndex({index}) called");
+                // Log current children count and index
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] Children count: {_root.GetCachedChildCount()}, Requested index: {index}");
+
+                // Use synchronous cached method to avoid threading issues
+                var child = _root.GetCachedChildAtIndex(index);
+
+                if (child == null)
+                {
+                    Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ Invalid child index: {index} (child/context missing)");
+                    context.ReplyError("org.freedesktop.DBus.Error.InvalidArgs", $"Index {index} out of range or context missing");
+                    return;
+                }
+
+                var writer = context.CreateReplyWriter("(so)");
+                writer.WriteStructureStart();
+                writer.WriteString(child.Value.Service);
+                writer.WriteObjectPath(child.Value.Path);
+                context.Reply(writer.CreateMessage());
+
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ✅ GetChildAtIndex({index}) returned: {child.Value.Service}:{child.Value.Path}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AtspiRootPropertiesMethodHandler] ❌ GetChildAtIndex failed: {e.Message}");
                 context.ReplyError("org.freedesktop.DBus.Error.Failed", e.Message);
             }
         }

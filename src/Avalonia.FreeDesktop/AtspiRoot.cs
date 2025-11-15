@@ -300,7 +300,24 @@ namespace Avalonia.FreeDesktop
                 lock (_instance._children)
                 {
                     _instance._children.Add(child);
-                    Console.WriteLine($"[AtspiRoot] Added child. Thread: {Thread.CurrentThread.ManagedThreadId}, Total children: {_instance._children.Count}");
+                        Console.WriteLine($"[AtspiRoot] Added child. Thread: {Thread.CurrentThread.ManagedThreadId}, Total children: {_instance._children.Count}");
+
+                        // If this is the first child and it's a window peer, create and register its AT-SPI context
+                        if (_instance._children.Count == 1 && child.Peer != null)
+                        {
+                            Console.WriteLine($"[AtspiRoot] Checking if first child is window peer for context creation. Peer type: {child.Peer.GetType().Name}");
+                            var context = _instance.CreateAutomationContext(child.Peer);
+                            if (context != null)
+                            {
+                                Console.WriteLine($"[AtspiRoot] Created AT-SPI context for window peer: {child.Peer.GetType().Name}, ObjectPath={context.ObjectPath}");
+                                _instance.RegisterChildContextWithDBus(context);
+                                Console.WriteLine($"[AtspiRoot] Registered AT-SPI context for window peer with D-Bus: {context.ObjectPath}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[AtspiRoot] Failed to create AT-SPI context for window peer: {child.Peer.GetType().Name}");
+                            }
+                        }
                 }
                 Console.WriteLine("[AtspiRoot] RegisterRoot completed successfully.");
                 return _instance;
@@ -314,18 +331,18 @@ namespace Avalonia.FreeDesktop
 
         internal AtspiContext CreateAutomationContext(AutomationPeer peer)
         {
-            // Check if context already exists for this peer
+            Console.WriteLine($"[AtspiRoot] CreateAutomationContext called for peer: {peer?.GetType().Name ?? "null"}, peer={peer}");
             if (_contexts.TryGetValue(peer, out var existingContext))
             {
-                Console.WriteLine($"🔧 AT-SPI: Reusing existing context {existingContext.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
+                Console.WriteLine($"[AtspiRoot] Context already exists for peer: {peer.GetType().Name}, ObjectPath={existingContext.ObjectPath}");
                 return existingContext;
             }
-            
             var result = AtspiContextFactory.Create(this, peer);
             _contexts[peer] = result;
+            Console.WriteLine($"[AtspiRoot] Context created and added for peer: {peer.GetType().Name}, ObjectPath={result.ObjectPath}");
             _cache?.Add(result);
             System.Diagnostics.Debug.WriteLine($"Created {result.ObjectPath} for {peer}");
-            Console.WriteLine($"🔧 AT-SPI: Created context {result.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
+            Console.WriteLine($"[AtspiRoot] Created context {result.ObjectPath} for {peer.GetType().Name} '{peer.GetName() ?? "unnamed"}'");
             
             // Only register child context with D-Bus if we have a connection, path not already registered, AND root is registered
             if (_connection != null && 
@@ -914,6 +931,49 @@ namespace Avalonia.FreeDesktop
             return context;
         }
 
+        // Synchronous method for D-Bus handlers - returns cached child reference
+        public ObjectReference? GetCachedChildAtIndex(int index)
+        {
+            lock (_children)
+            {
+                Console.WriteLine($"[AtspiRoot] GetCachedChildAtIndex({index}) called. Total children: {_children.Count}");
+                for (int i = 0; i < _children.Count; i++)
+                {
+                    var child = _children[i];
+                    var peerType = child.Peer?.GetType().Name ?? "null";
+                    Console.WriteLine($"[AtspiRoot] Child[{i}]: PeerType={peerType}, Peer={(child.Peer != null ? "set" : "null")}");
+                }
+                if (index < 0 || index >= _children.Count)
+                {
+                    Console.WriteLine($"[AtspiRoot] GetCachedChildAtIndex({index}) - out of range (count: {_children.Count})");
+                    return null;
+                }
+
+                var childAtIndex = _children[index];
+                var peer = childAtIndex.Peer;
+                if (peer == null)
+                {
+                    Console.WriteLine($"[AtspiRoot] GetCachedChildAtIndex({index}) - peer is null, not initialized");
+                    return null;
+                }
+                if (!_contexts.TryGetValue(peer, out var context))
+                {
+                    Console.WriteLine($"[AtspiRoot] GetCachedChildAtIndex({index}) - context not found for peer, not initialized");
+                    return null;
+                }
+                Console.WriteLine($"[AtspiRoot] GetCachedChildAtIndex({index}) - returning ObjectReference: Service={_busName ?? ":1.0"}, Path={context.ObjectPath}");
+                return new ObjectReference(_busName ?? ":1.0", context.ObjectPath);
+            }
+        }
+
+        public int GetCachedChildCount()
+        {
+            lock (_children)
+            {
+                return _children.Count;
+            }
+        }
+
         async Task<ObjectReference> IAccessible.GetChildAtIndexAsync(int index)
         {
             var child = _children[index];
@@ -1002,10 +1062,23 @@ namespace Avalonia.FreeDesktop
 
         private void AddChild(Child child)
         {
+            Console.WriteLine($"[AtspiRoot] AddChild called for child with peer: {child.Peer?.GetType().Name ?? "null"}");
             lock (_children)
             {
                 _children.Add(child);
                 Console.WriteLine($"[AtspiRoot] Child added. Total children: {_children.Count}");
+                // Ensure peer is created before context
+                if (child.Peer == null)
+                {
+                    child.CreatePeer();
+                    Console.WriteLine($"[AddChild] Created peer for child");
+                }
+                // Ensure automation context is created for the peer
+                if (child.Peer != null && !_contexts.ContainsKey(child.Peer))
+                {
+                    var context = CreateAutomationContext(child.Peer);
+                    Console.WriteLine($"[AddChild] Created automation context for child: {context.ObjectPath}");
+                }
             }
         }
 
@@ -1022,8 +1095,27 @@ namespace Avalonia.FreeDesktop
                     return;
                 }
 
+                // Ensure all child peers and contexts are created on the UI thread
+                Console.WriteLine($"[CompleteInitialization] Creating peers and contexts for {_children.Count} children...");
+                foreach (var child in _children)
+                {
+                    if (child.Peer == null)
+                    {
+                        child.CreatePeer();
+                        Console.WriteLine($"[CompleteInitialization] Created peer for child");
+                    }
+                    
+                    // Pre-create the automation context while on UI thread
+                    var peer = child.Peer;
+                    if (peer != null && !_contexts.ContainsKey(peer))
+                    {
+                        var context = CreateAutomationContext(peer);
+                        Console.WriteLine($"[CompleteInitialization] Pre-created context: {context.ObjectPath}");
+                    }
+                }
+
                 _isInitialized = true;
-                Console.WriteLine("[CompleteInitialization] Initialization complete.");
+                Console.WriteLine($"[CompleteInitialization] Initialization complete. {_contexts.Count} contexts created.");
             }
         }
 
@@ -1060,7 +1152,8 @@ namespace Avalonia.FreeDesktop
                 };
 
                 Console.WriteLine("[RegisterRootInstance] Accessible properties initialized.");
-
+                // Ensure all child peers and contexts are created before D-Bus registration
+                CompleteInitialization();
                 // Register the root with D-Bus
                 RegisterRootWithDBus();
                 Console.WriteLine("[RegisterRootInstance] Root registered with D-Bus.");
