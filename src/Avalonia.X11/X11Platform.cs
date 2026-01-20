@@ -85,7 +85,8 @@ namespace Avalonia.X11
                 .Bind<IPlatformSettings>().ToSingleton<DBusPlatformSettings>()
                 .Bind<IPlatformIconLoader>().ToConstant(new X11IconLoader())
                 .Bind<IMountedVolumeInfoProvider>().ToConstant(new LinuxMountedVolumeInfoProvider())
-                .Bind<IPlatformLifetimeEventsImpl>().ToConstant(new X11PlatformLifetimeEvents(this));
+                .Bind<IPlatformLifetimeEventsImpl>().ToConstant(new X11PlatformLifetimeEvents(this))
+                .Bind<IAutomationPeerFactory>().ToSingleton<LinuxAutomationPeerFactory>();
             
             Screens = X11Screens = new X11Screens(this);
             if (Info.XInputVersion != null)

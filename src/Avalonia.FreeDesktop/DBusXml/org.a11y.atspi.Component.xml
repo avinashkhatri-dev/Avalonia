@@ -1,0 +1,85 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.a11y.atspi.Component">
+    <property name="version" type="u" access="read"/>
+    
+    <method name="Contains">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+    
+    <method name="GetAccessibleAtPoint">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="(so)"/>
+    </method>
+    
+    <method name="GetExtents">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="(iiii)"/>
+    </method>
+    
+    <method name="GetPosition">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" name="x" type="i"/>
+      <arg direction="out" name="y" type="i"/>
+    </method>
+    
+    <method name="GetSize">
+      <arg direction="out" name="width" type="i"/>
+      <arg direction="out" name="height" type="i"/>
+    </method>
+    
+    <method name="GetLayer">
+      <arg direction="out" type="u"/>
+    </method>
+    
+    <method name="GetMDIZOrder">
+      <arg direction="out" type="n"/>
+    </method>
+    
+    <method name="GetAlpha">
+      <arg direction="out" type="d"/>
+    </method>
+    
+    <method name="GrabFocus">
+      <arg direction="out" type="b"/>
+    </method>
+    
+    <method name="SetExtents">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="width" type="i"/>
+      <arg direction="in" name="height" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+    
+    <method name="SetPosition">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+    
+    <method name="SetSize">
+      <arg direction="in" name="width" type="i"/>
+      <arg direction="in" name="height" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+    
+    <method name="ScrollTo">
+      <arg direction="in" name="type" type="u"/>
+    </method>
+    
+    <method name="ScrollToPoint">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+  </interface>
+</node>

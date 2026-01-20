@@ -1,4 +1,5 @@
-﻿using Avalonia.Controls;
+﻿using System;
+using Avalonia.Controls;
 
 namespace Avalonia.Automation.Peers
 {
@@ -16,17 +17,24 @@ namespace Avalonia.Automation.Peers
         protected override string? GetNameCore()
         {
             var result = base.GetNameCore();
+            Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] base result: '{result ?? "NULL"}'");
+            Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] Owner: {Owner?.GetType().Name ?? "NULL"}");
+            Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] Owner.Content: {Owner?.Content ?? "NULL"}");
+            Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] Owner.Content type: {Owner?.Content?.GetType().Name ?? "NULL"}");
 
-            if (result is null && Owner.Presenter?.Child is TextBlock text)
+            if (result is null && Owner?.Presenter?.Child is TextBlock text)
             {
                 result = text.Text;
+                Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] From TextBlock: '{result ?? "NULL"}'");
             }
 
-            if (result is null)
+            if (result is null && Owner?.Content is object content)
             {
-                result = Owner.Content?.ToString();
+                result = content.ToString();
+                Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] From Content.ToString(): '{result ?? "NULL"}'");
             }
 
+            Console.WriteLine($"[ContentControlAutomationPeer.GetNameCore] Final result: '{result ?? "NULL"}'");
             return result;
         }
 

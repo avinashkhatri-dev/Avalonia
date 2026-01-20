@@ -3,6 +3,7 @@ using System.Linq;
 using System.Windows.Input;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls.Metadata;
+using Avalonia.Controls.Platform;
 using Avalonia.Controls.Primitives;
 using Avalonia.Data;
 using Avalonia.Input;
@@ -550,7 +551,22 @@ namespace Avalonia.Controls
             }
         }
 
-        protected override AutomationPeer OnCreateAutomationPeer() => new ButtonAutomationPeer(this);
+        protected override AutomationPeer OnCreateAutomationPeer()
+        {
+            // Check if a platform-specific automation peer factory is available
+            var factory = AvaloniaLocator.Current.GetService<IAutomationPeerFactory>();
+            if (factory != null)
+            {
+                var platformPeer = factory.CreateAutomationPeer(this);
+                if (platformPeer != null)
+                {
+                    return platformPeer;
+                }
+            }
+            
+            // Fall back to the default ButtonAutomationPeer
+            return new ButtonAutomationPeer(this);
+        }
 
         /// <inheritdoc/>
         protected override void UpdateDataValidation(

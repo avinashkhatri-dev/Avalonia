@@ -1254,6 +1254,16 @@ namespace Avalonia.Controls
 
         protected override AutomationPeer OnCreateAutomationPeer()
         {
+            // Check if we have a platform-specific automation peer factory first
+            var factory = AvaloniaLocator.Current.GetService<IAutomationPeerFactory>();
+            if (factory != null)
+            {
+                var peer = factory.CreateAutomationPeer(this);
+                if (peer != null)
+                    return peer;
+            }
+            
+            // Fallback to default Window automation peer
             return new WindowAutomationPeer(this);
         }
 

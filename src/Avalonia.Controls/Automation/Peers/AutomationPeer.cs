@@ -555,5 +555,16 @@ namespace Avalonia.Automation.Peers
             if (!IsEnabled())
                 throw new ElementNotEnabledException();
         }
+
+        /// <summary>
+        /// Creates the platform-specific implementation for this automation peer.
+        /// This is called when the automation peer is first created to set up platform-specific
+        /// functionality like AT-SPI on Linux or UIA on Windows.
+        /// </summary>
+        internal virtual void CreatePlatformImpl()
+        {
+            // Default implementation does nothing
+            // Platform-specific automation implementations should override this
+        }
     }
 }

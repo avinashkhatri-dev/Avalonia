@@ -1,0 +1,13 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.a11y.atspi.Application">
+    <property name="ToolkitName" type="s" access="read"/>
+    <property name="ToolkitVersion" type="s" access="read"/>
+    <property name="AtspiVersion" type="s" access="read"/>
+    <property name="Id" type="i" access="read"/>
+    
+    <method name="GetApplicationInterfaces">
+      <arg direction="out" type="as"/>
+    </method>
+  </interface>
+</node>
